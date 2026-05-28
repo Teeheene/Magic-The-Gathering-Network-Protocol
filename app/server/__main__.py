@@ -1,10 +1,27 @@
-class Dog:
-    def bark(self):
-        print("arf");
+import socket
+
+HOST = '0.0.0.0'
+PORT = 8080
+
+serv = socket.socket(socket.AF_INET, socket.SOCK_STREAM) 
+
+serv.bind((HOST, PORT))
+serv.listen(5)
 
 def main():
-    potato = Dog()
-    Dog.bark(potato)
+    conn, addr = serv.accept()
+    from_client = ''
+
+    while True:
+        data = conn.recv(4096)
+        if not data: break
+        from_client += data.decode()
+        print(from_client)
+
+        conn.send(b'I am SERVER\n')
+
+    conn.close()
+    print('client disconnected')
 
 if __name__ == '__main__':
     main()
