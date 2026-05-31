@@ -1,16 +1,25 @@
 import socket
 
-HOST = '0.0.0.0'
-PORT = 4444
+# TODO
+# <> abstract client from main 
 
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((HOST, PORT))
-
+# sample client
 def main():
-    client.send(b'I am CLIENT\n')
-    from_server = client.recv(4096)
-    client.close()
-    print(from_server.decode()) 
+    HOST = input("Enter host: ")
+    PORT = int(input("Enter port: "))
+    client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+    # test conn
+    client.connect((HOST, PORT))
+
+    while 1:
+        data = str(client.recv(1024), "utf-8")
+        received = "server..." + data
+        if not data:
+            break
+
+        print(received)
 
 if __name__ == '__main__':
     main()
+
