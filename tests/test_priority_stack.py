@@ -102,9 +102,10 @@ class TestPriorityAndStack(unittest.TestCase):
             resolved_order.append("item1")
             return [{"change_type": "DAMAGE", "target": "player_2", "amount": 3}]
 
-        def effect2(item, state):
+        def effect2(item, state, game_stack=None):
             resolved_order.append("item2")
-            return [{"change_type": "COUNTER", "target": "stk_01"}]
+            import app.server.game.effects as FX
+            return FX.counter_spell(item.targets[0], state, game_stack or self.stack)
 
         item1 = StackItem("stk_01", "SPELL", "shock_001", "player_1", ["player_2"], effect_fn=effect1)
         item2 = StackItem("stk_02", "SPELL", "counterspell_001", "player_2", ["stk_01"], effect_fn=effect2)
@@ -123,7 +124,7 @@ class TestPriorityAndStack(unittest.TestCase):
 
         self.assertEqual(res["status"], "RESOLVED")
         self.assertEqual(resolved_order, ["item2"])
-        self.assertEqual(len(self.state.stack), 1)
+        self.assertEqual(len(self.state.stack), 0)
         # Priority goes back to AP (player_1)
         self.assertEqual(self.state.priority_holder, "player_1")
 
