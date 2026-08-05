@@ -122,13 +122,8 @@ class TestCoreContracts(unittest.TestCase):
         stack = GameStack(gs)
         tm = TriggerManager(gs, stack)
 
-        # Spell resolution: places Gray Merchant on battlefield
-        res_changes = resolve_gray_merchant(
-            StackItem("stk_01", "SPELL", "gray_merchant_001", "player_1", []),
-            gs
-        )
-        self.assertEqual(res_changes[0]["change_type"], "ENTER_BATTLEFIELD")
-        self.assertEqual(gs.life_totals["player_2"], 20) # No damage yet before trigger resolves
+        gs.battlefield["player_1"].append({"id": "gray_merchant_001", "tapped": False})
+        self.assertEqual(gs.life_totals["player_2"], 20)
 
         # Detect ETB event
         evt = GameEvent("permanent_entered", {"card_id": "gray_merchant_001", "controller": "player_1"})

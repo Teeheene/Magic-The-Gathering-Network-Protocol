@@ -95,37 +95,22 @@ def discard_cards(player_id: str, card_ids: List[str], game_state: GameState) ->
             })
     return changes
 
-def counter_spell(target_stack_item_id: str, game_state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
-    removed_item = None
-    if game_stack and hasattr(game_stack, "remove_item"):
-        removed_item = game_stack.remove_item(target_stack_item_id)
-
-    if removed_item:
-        source_card_id = removed_item.source
-        controller = removed_item.controller
-        gy = game_state.graveyards.get(controller, [])
-        if source_card_id and source_card_id not in gy:
-            gy.append(source_card_id)
-        return [{
-            "change_type": "COUNTER",
-            "target": target_stack_item_id,
-            "card_id": source_card_id
-        }]
-
-    for idx, item in enumerate(list(game_state.stack)):
-        if item.get("stack_item_id") == target_stack_item_id:
-            removed = game_state.stack.pop(idx)
-            source_card_id = removed.get("source", "")
-            controller = removed.get("controller", "")
-            gy = game_state.graveyards.get(controller, [])
-            if source_card_id and source_card_id not in gy:
-                gy.append(source_card_id)
-            return [{
-                "change_type": "COUNTER",
-                "target": target_stack_item_id,
-                "card_id": source_card_id
-            }]
-    return []
+def counter_spell(target_stack_item_id: str, game_state: GameState, game_stack: Any) -> List[Dict[str, Any]]:
+    if not game_stack or not hasattr(game_stack, "remove_item"):
+        raise ValueError("counter_spell requires an authoritative GameStack instance.")
+    removed_item = game_stack.remove_item(target_stack_item_id)
+    if removed_item is None:
+        return []
+    source_card_id = removed_item.source
+    controller = removed_item.controller
+    gy = game_state.graveyards.get(controller, [])
+    if source_card_id and source_card_id not in gy:
+        gy.append(source_card_id)
+    return [{
+        "change_type": "COUNTER",
+        "target": target_stack_item_id,
+        "card_id": source_card_id
+    }]
 
 def destroy_permanent(permanent_id: str, game_state: GameState) -> List[Dict[str, Any]]:
     for controller in game_state.players:

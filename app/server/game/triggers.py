@@ -1,7 +1,7 @@
 from typing import List, Dict, Any, Optional, Callable
 from app.server.game.game_state import GameState
 from app.server.game.stack import GameStack, StackItem
-from app.server.game.events import GameEvent
+from app.server.game.events import GameEvent, EventBus
 from app.server.interfaces import TransportInterface, SeqNumProvider
 
 def calculate_devotion_to_black(ctrl: str, state: GameState) -> int:
@@ -17,11 +17,6 @@ def calculate_devotion_to_black(ctrl: str, state: GameState) -> int:
         def_obj = cat.get_definition(cid) if cat else None
         if def_obj and hasattr(def_obj, "mana_cost") and isinstance(def_obj.mana_cost, dict):
             devotion += def_obj.mana_cost.get("B", 0)
-        else:
-            if "swamp" in cid:
-                devotion += 1
-            elif "gray_merchant" in cid:
-                devotion += 2
     return max(0, devotion)
 
 class TriggeredAbility:
@@ -36,18 +31,25 @@ class TriggeredAbility:
         self.effect_fn = effect_fn
 
 class TriggerManager:
-    def __init__(self, game_state: GameState, stack: GameStack, transport: Optional[TransportInterface] = None, seq_num_provider: Optional[SeqNumProvider] = None):
+    def __init__(self, game_state: GameState, stack: GameStack, transport: Optional[TransportInterface] = None, seq_num_provider: Optional[SeqNumProvider] = None, event_bus: Optional[EventBus] = None):
         self.game_state = game_state
         self.stack = stack
         self.transport = transport
         self.seq_num_provider = seq_num_provider
+        self.event_bus = event_bus
         self.pending_triggers: List[TriggeredAbility] = []
         self._next_trg_id = 1
+
+        if self.event_bus:
+            self.event_bus.subscribe_all(self.on_event)
 
     def generate_trigger_id(self) -> str:
         tid = f"trg_{self._next_trg_id:02d}"
         self._next_trg_id += 1
         return tid
+
+    def on_event(self, event: GameEvent) -> List[TriggeredAbility]:
+        return self.detect_triggers_for_event(event)
 
     def detect_triggers_for_event(self, event: GameEvent) -> List[TriggeredAbility]:
         detected: List[TriggeredAbility] = []
@@ -55,8 +57,8 @@ class TriggerManager:
         if event.event_type == "attacker_declared":
             attacker_id = event.data.get("creature_id")
             if attacker_id and "goblin_guide" in attacker_id:
-                ctrl = self.game_state.get_permanent_controller(attacker_id) or self.game_state.active_player
-                opp = self.game_state.get_opponent(ctrl)
+                ctrl = event.data.get("controller") or self.game_state.get_permanent_controller(attacker_id) or self.game_state.active_player
+                opp = event.data.get("defending_player") or self.game_state.get_opponent(ctrl)
                 trg = TriggeredAbility(
                     trigger_id=self.generate_trigger_id(),
                     source_id=attacker_id,
@@ -140,20 +142,55 @@ class TriggerManager:
         
         self.pending_triggers.clear()
 
+        # AP triggers placed first (bottom of stack)
         for trg in ap_triggers:
-            self._push_trigger_to_stack(trg)
+            if not trg.optional and not trg.requires_target:
+                self._push_trigger_to_stack(trg)
+            else:
+                self.pending_triggers.append(trg)
 
+        # NAP triggers placed second (top of stack, resolves first)
         for trg in nap_triggers:
-            self._push_trigger_to_stack(trg)
+            if not trg.optional and not trg.requires_target:
+                self._push_trigger_to_stack(trg)
+            else:
+                self.pending_triggers.append(trg)
 
-    def _push_trigger_to_stack(self, trg: TriggeredAbility) -> None:
+    def _push_trigger_to_stack(self, trg: TriggeredAbility, chosen_target: Optional[str] = None) -> None:
         stk_id = self.stack.generate_stack_item_id()
+        targets = [chosen_target] if chosen_target else []
         item = StackItem(
             stack_item_id=stk_id,
             item_type="TRIGGER_ABILITY",
             source=trg.source_id,
             controller=trg.controller,
-            targets=[],
+            targets=targets,
             effect_fn=trg.effect_fn
         )
         self.stack.push(item)
+
+    def handle_trigger_order_response(self, player_id: str, ordered_trigger_ids: List[str]) -> bool:
+        player_pending = [t for t in self.pending_triggers if t.controller == player_id]
+        expected_ids = {t.trigger_id for t in player_pending}
+        if set(ordered_trigger_ids) != expected_ids or len(ordered_trigger_ids) != len(player_pending):
+            return False
+        
+        trg_map = {t.trigger_id: t for t in player_pending}
+        for tid in ordered_trigger_ids:
+            trg = trg_map[tid]
+            self._push_trigger_to_stack(trg)
+            self.pending_triggers.remove(trg)
+        return True
+
+    def handle_trigger_choice_response(self, player_id: str, trigger_id: str, accept: bool, chosen_target: Optional[str] = None) -> bool:
+        trg = next((t for t in self.pending_triggers if t.trigger_id == trigger_id and t.controller == player_id), None)
+        if not trg:
+            return False
+        
+        self.pending_triggers.remove(trg)
+        if accept:
+            if trg.requires_target:
+                if not chosen_target or chosen_target not in trg.legal_targets:
+                    return False
+            self._push_trigger_to_stack(trg, chosen_target)
+        return True

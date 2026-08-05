@@ -66,9 +66,9 @@ def render_cli(state_dict: Dict[str, Any], local_pid: Optional[str]) -> None:
     print(f"  Hand ({len(my_hand)}): {', '.join(my_hand) if my_hand else '(empty)'}")
     print("=" * 60 + "\n")
 
-def run_cli(host: str = "127.0.0.1", port: int = 4444, verbose: bool = False):
+def run_cli(host: str = "127.0.0.1", port: int = 4444, verbose: bool = False, player_id: Optional[str] = None):
     t_obj = ClientTransport(verbose=verbose)
-    state = ClientState()
+    state = ClientState(player_id=player_id)
     
     print(f"Connecting to MTGNP server at {host}:{port}...")
     try:

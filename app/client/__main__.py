@@ -18,7 +18,7 @@ def read_framed_pdu(sock) -> Optional[Dict[str, Any]]:
     t.sock = sock
     return t.read_pdu()
 
-def run_tkinter_app(host: Optional[str] = None, port: Optional[int] = None, verbose: bool = False):
+def run_tkinter_app(host: Optional[str] = None, port: Optional[int] = None, verbose: bool = False, player_id: Optional[str] = None):
     from app.client.gui import GraphicalGameClient
     if not host:
         try:
@@ -45,7 +45,7 @@ def run_tkinter_app(host: Optional[str] = None, port: Optional[int] = None, verb
         except Exception as e:
             print(f"Send error: {e}")
 
-    app = GraphicalGameClient(send_action_fn=send_act)
+    app = GraphicalGameClient(send_action_fn=send_act, client_state=ClientState(player_id=player_id))
 
     def listen_loop():
         while True:
@@ -68,18 +68,19 @@ def main():
     parser.add_argument("--verbose", action="store_true", help="Enable verbose raw PDU logging")
     parser.add_argument("--host", type=str, default=None, help="Server host IP")
     parser.add_argument("--port", type=int, default=None, help="Server port")
+    parser.add_argument("--player-id", type=str, default=None, help="Explicit Player ID")
 
     args = parser.parse_args()
 
     if args.cli:
         host = args.host or "127.0.0.1"
         port = args.port or 4444
-        run_cli(host=host, port=port, verbose=args.verbose)
+        run_cli(host=host, port=port, verbose=args.verbose, player_id=args.player_id)
     elif args.qt:
         from app.client.qt.application import run_qt_app
         run_qt_app(host=args.host, port=args.port, verbose=args.verbose)
     else:
-        run_tkinter_app(host=args.host, port=args.port, verbose=args.verbose)
+        run_tkinter_app(host=args.host, port=args.port, verbose=args.verbose, player_id=args.player_id)
 
 if __name__ == "__main__":
     main()

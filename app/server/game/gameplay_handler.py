@@ -5,14 +5,16 @@ from app.server.game.priority import PriorityManager
 from app.server.game.cards import CardCatalog, CardInstance, CardDefinition
 from app.server.game.mana import ManaPayment
 from app.server.game.effect_handlers import get_effect_handler
+from app.server.game.events import EventBus, GameEvent
 from app.server.interfaces import PhaseManagerInterface
 
 class GameplayHandler:
-    def __init__(self, game_state: GameState, stack: GameStack, priority_mgr: PriorityManager, phase_manager: Optional[PhaseManagerInterface] = None):
+    def __init__(self, game_state: GameState, stack: GameStack, priority_mgr: PriorityManager, phase_manager: Optional[PhaseManagerInterface] = None, event_bus: Optional[EventBus] = None):
         self.game_state = game_state
         self.stack = stack
         self.priority_mgr = priority_mgr
         self.phase_manager = phase_manager
+        self.event_bus = event_bus
         self.catalog = CardCatalog.get_instance()
 
     def play_land(self, player_id: str, card_id: str) -> Dict[str, Any]:
@@ -38,7 +40,6 @@ class GameplayHandler:
         if not definition or not definition.is_land():
             return {"status": "ERROR", "code": "ILLEGAL_ACTION", "message": "Card is not a land."}
 
-        # Remove from hand, place on battlefield
         hand.remove(card_id)
         self.game_state.battlefield[player_id].append({
             "id": card_id,
@@ -48,7 +49,9 @@ class GameplayHandler:
         if self.phase_manager:
             self.phase_manager.mark_land_played()
 
-        # Re-issue priority grant to AP
+        if self.event_bus:
+            self.event_bus.publish(GameEvent("permanent_entered", {"card_id": card_id, "controller": player_id}))
+
         self.priority_mgr.grant_priority(player_id)
         return {"status": "SUCCESS", "action": "PLAY_LAND", "card_id": card_id}
 
@@ -67,7 +70,6 @@ class GameplayHandler:
         current_phase = self.phase_manager.get_current_phase() if self.phase_manager else self.game_state.phase
         active_player = self.phase_manager.get_active_player() if self.phase_manager else self.game_state.active_player
 
-        # Sorcery-speed timing check
         if not definition.is_instant():
             if player_id != active_player:
                 return {"status": "ERROR", "code": "WRONG_PHASE", "message": "Non-instants require sorcery speed (Active Player)." }
@@ -76,23 +78,21 @@ class GameplayHandler:
             if not self.stack.is_empty():
                 return {"status": "ERROR", "code": "WRONG_PHASE", "message": "Non-instants require empty stack."}
 
-        # Validate & execute mana payment
         success, err_msg, tapped_sources = ManaPayment.execute_payment(player_id, definition.mana_cost, mana_payment, self.game_state)
         if not success:
             return {"status": "ERROR", "code": "INSUFFICIENT_MANA", "message": err_msg}
 
-        # Remove card from hand
         hand.remove(card_id)
 
         base_id = self.catalog.extract_base_id(card_id)
         handler_fn = get_effect_handler(base_id)
 
-        # Define resolution effect wrapper
         def make_resolution_effect(def_obj: CardDefinition, c_id: str, ctrl: str, h_fn: Optional[Any]):
-            def effect_fn(item: StackItem, state: GameState) -> List[Dict[str, Any]]:
+            def effect_fn(item: StackItem, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
                 changes = []
+                stk = game_stack or self.stack
                 if h_fn:
-                    changes = h_fn(item, state) or []
+                    changes = h_fn(item, state, stk) or []
 
                 if def_obj.is_permanent():
                     instance = CardInstance(c_id, def_obj, ctrl)
@@ -103,6 +103,8 @@ class GameplayHandler:
                         "controller": ctrl,
                         "tapped": False
                     })
+                    if self.event_bus:
+                        self.event_bus.publish(GameEvent("permanent_entered", {"card_id": c_id, "controller": ctrl}))
                 else:
                     state.graveyards[ctrl].append(c_id)
                     changes.append({
@@ -124,8 +126,22 @@ class GameplayHandler:
         )
 
         self.stack.push(stack_item)
-        self.priority_mgr.handle_action(player_id)
 
+        if self.event_bus:
+            self.event_bus.publish(GameEvent("spell_cast", {
+                "card_id": card_id,
+                "controller": player_id,
+                "targets": list(targets),
+                "stack_item_id": stack_item_id
+            }))
+            for target_id in targets:
+                self.event_bus.publish(GameEvent("became_target", {
+                    "target_id": target_id,
+                    "source_id": card_id,
+                    "controller": player_id
+                }))
+
+        self.priority_mgr.handle_action(player_id)
         return {"status": "SUCCESS", "action": "CAST_SPELL", "stack_item_id": stack_item_id}
 
     def activate_ability(self, player_id: str, source_id: str, ability_index: int, targets: List[str], cost_payment: Dict[str, Any]) -> Dict[str, Any]:
@@ -158,6 +174,21 @@ class GameplayHandler:
         )
 
         self.stack.push(stack_item)
-        self.priority_mgr.handle_action(player_id)
 
+        if self.event_bus:
+            self.event_bus.publish(GameEvent("ability_activated", {
+                "source_id": source_id,
+                "controller": player_id,
+                "ability_index": ability_index,
+                "targets": list(targets),
+                "stack_item_id": stack_item_id
+            }))
+            for target_id in targets:
+                self.event_bus.publish(GameEvent("became_target", {
+                    "target_id": target_id,
+                    "source_id": source_id,
+                    "controller": player_id
+                }))
+
+        self.priority_mgr.handle_action(player_id)
         return {"status": "SUCCESS", "action": "ACTIVATE_ABILITY", "stack_item_id": stack_item_id}

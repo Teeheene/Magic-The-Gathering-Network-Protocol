@@ -10,16 +10,16 @@ class CombatManager:
         self.transport = transport
         self.seq_num_provider = seq_num_provider
         self.catalog = CardCatalog.get_instance()
-        self.attackers: List[Dict[str, str]] = [] # [{"creature_id": "...", "target": "player_2"}]
-        self.blockers: List[Dict[str, str]] = [] # [{"creature_id": "...", "blocking_id": "..."}]
-        self.damage_orders: Dict[str, List[str]] = {} # attacker_id -> [blocker1, blocker2]
+        self.attackers: List[Dict[str, str]] = []
+        self.blockers: List[Dict[str, str]] = []
+        self.damage_orders: Dict[str, List[str]] = {}
 
     def reset_combat(self) -> None:
         self.attackers.clear()
         self.blockers.clear()
         self.damage_orders.clear()
 
-    def validate_and_declare_attackers(self, player_id: str, attacker_declarations: List[Dict[str, str]]) -> Tuple[bool, str]:
+    def validate_and_declare_attackers(self, player_id: str, attacker_declarations: List[Dict[str, str]], event_bus: Optional[Any] = None) -> Tuple[bool, str]:
         if player_id != self.game_state.active_player:
             return False, "Only Active Player can declare attackers."
 
@@ -53,7 +53,6 @@ class CombatManager:
                 if not def_obj or "haste" not in def_obj.keywords:
                     return False, f"Creature {cid} has summoning sickness."
 
-            # Check defender / pacifism
             def_obj = self.catalog.get_definition(cid)
             if def_obj and "defender" in def_obj.keywords:
                 return False, f"Creature {cid} has defender and cannot attack."
@@ -61,15 +60,20 @@ class CombatManager:
             if perm.get("attached_pacifism", False):
                 return False, f"Creature {cid} is enchanted with Pacifism and cannot attack."
 
-        # Apply attacker declaration
         self.attackers = list(attacker_declarations)
         for decl in attacker_declarations:
             cid = decl["creature_id"]
             perm = self.game_state.get_permanent(cid)
             def_obj = self.catalog.get_definition(cid)
-            # Tap attacker unless vigilance
             if perm and (not def_obj or "vigilance" not in def_obj.keywords):
                 perm["tapped"] = True
+
+            if event_bus:
+                event_bus.publish(GameEvent("attacker_declared", {
+                    "creature_id": cid,
+                    "controller": player_id,
+                    "defending_player": opponent
+                }))
 
         return True, "Attackers declared successfully."
 
@@ -105,14 +109,12 @@ class CombatManager:
             if b_perm.get("attached_pacifism", False):
                 return False, f"Blocker {blocker_id} is enchanted with Pacifism and cannot block."
 
-            # Check flying restriction
             a_def = self.catalog.get_definition(attacker_id)
             b_def = self.catalog.get_definition(blocker_id)
             if a_def and "flying" in a_def.keywords:
                 if not b_def or "flying" not in b_def.keywords:
                     return False, f"Creature {attacker_id} has flying; {blocker_id} cannot block it."
 
-            # Check protection
             if a_def and b_def:
                 if "protection_from_black" in a_def.keywords and b_def.color == "B":
                     return False, f"{attacker_id} has protection from black; {blocker_id} cannot block it."
@@ -123,7 +125,6 @@ class CombatManager:
         return True, "Blockers declared successfully."
 
     def needs_damage_order(self) -> List[str]:
-        # Return list of attacker_ids that have 2+ blockers
         blocker_counts: Dict[str, int] = {}
         for b in self.blockers:
             aid = b["blocking_id"]
@@ -145,11 +146,10 @@ class CombatManager:
                 return True
         return False
 
-    def resolve_combat_damage(self, is_first_strike_step: bool = False) -> Dict[str, Any]:
+    def resolve_combat_damage(self, is_first_strike_step: bool = False, broadcast: bool = True) -> Dict[str, Any]:
         damage_events: List[Dict[str, Any]] = []
         creatures_died: List[str] = []
 
-        # Find attackers and their blockers
         for att in self.attackers:
             aid = att["creature_id"]
             target_player = att["target"]
@@ -162,15 +162,13 @@ class CombatManager:
             a_fs = a_def and ("first_strike" in a_def.keywords or "double_strike" in a_def.keywords)
             a_ds = a_def and "double_strike" in a_def.keywords
 
-            # Determine if attacker deals damage in this step
             if is_first_strike_step and not a_fs:
                 continue
             if not is_first_strike_step and a_fs and not a_ds:
                 continue
-            # Get blockers for this attacker
+
             b_ids = [b["creature_id"] for b in self.blockers if b["blocking_id"] == aid]
             if not b_ids:
-                # Unblocked! Deals damage to defending player
                 if a_power > 0:
                     self.game_state.life_totals[target_player] -= a_power
                     damage_events.append({
@@ -179,7 +177,6 @@ class CombatManager:
                         "amount": a_power
                     })
             else:
-                # Blocked! MTGNP 1.0 has NO trample. All damage assigned to blockers in damage order
                 ordered_blockers = self.damage_orders.get(aid, b_ids)
                 rem_damage = a_power
                 for bid in ordered_blockers:
@@ -200,7 +197,6 @@ class CombatManager:
                             "amount": assigned
                         })
 
-        # Blockers deal damage to attackers
         for blk in self.blockers:
             bid = blk["creature_id"]
             aid = blk["blocking_id"]
@@ -236,7 +232,57 @@ class CombatManager:
             "creatures_died": creatures_died
         }
 
-        if self.transport:
+        if broadcast and self.transport:
             self.transport.broadcast(pdu)
 
         return pdu
+
+class CombatOrchestrator:
+    def __init__(self, combat_manager: CombatManager, game_state: GameState, event_bus: Optional[Any] = None, transport: Optional[TransportInterface] = None, seq_num_provider: Optional[SeqNumProvider] = None):
+        self.combat_manager = combat_manager
+        self.game_state = game_state
+        self.event_bus = event_bus
+        self.transport = transport
+        self.seq_num_provider = seq_num_provider
+
+    def execute_combat_damage_step(self, is_first_strike_step: bool = False) -> Dict[str, Any]:
+        damage_pdu = self.combat_manager.resolve_combat_damage(is_first_strike_step=is_first_strike_step, broadcast=False)
+        damage_events = damage_pdu.get("damage_events", [])
+
+        if self.event_bus:
+            for dmg in damage_events:
+                self.event_bus.publish(GameEvent("combat_damage_dealt", dmg))
+
+        from app.server.game.sba import StateBasedActions
+        sba_changes, sba_events, game_over_result = StateBasedActions.check_and_apply(self.game_state)
+
+        creatures_died = []
+        if self.event_bus:
+            for evt in sba_events:
+                self.event_bus.publish(evt)
+                if evt.event_type == "creature_died":
+                    cid = evt.data.get("card_id")
+                    if cid:
+                        creatures_died.append(cid)
+        else:
+            for change in sba_changes:
+                if change.get("change_type") == "CREATURE_DIED":
+                    cid = change.get("target")
+                    if cid:
+                        creatures_died.append(cid)
+
+        seq = self.seq_num_provider.next_seq_num() if self.seq_num_provider else damage_pdu.get("seq_num", 0)
+        final_pdu = {
+            "type": "COMBAT_DAMAGE_RESULT",
+            "seq_num": seq,
+            "damage_events": damage_events,
+            "life_totals": dict(self.game_state.life_totals),
+            "creatures_died": creatures_died
+        }
+        if game_over_result:
+            final_pdu["game_over_result"] = game_over_result
+
+        if self.transport:
+            self.transport.broadcast(final_pdu)
+
+        return final_pdu

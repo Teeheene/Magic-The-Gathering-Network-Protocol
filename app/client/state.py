@@ -1,9 +1,42 @@
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from app.client.actions import ClientActionFactory
 
+def build_default_development_deck() -> List[str]:
+    deck: List[str] = []
+    for i in range(1, 21):
+        deck.append(f"mountain_{i:03d}")
+    for i in range(1, 5):
+        deck.append(f"lightning_bolt_{i:03d}")
+    for i in range(1, 5):
+        deck.append(f"shock_{i:03d}")
+    for i in range(1, 5):
+        deck.append(f"goblin_guide_{i:03d}")
+    for i in range(1, 5):
+        deck.append(f"searing_spear_{i:03d}")
+    for i in range(1, 5):
+        deck.append(f"incinerate_{i:03d}")
+    return deck
+
+def validate_deck(deck_list: List[str]) -> Tuple[bool, str]:
+    if not (1 <= len(deck_list) <= 50):
+        return False, f"Deck length {len(deck_list)} is invalid. Must be between 1 and 50."
+    if len(set(deck_list)) != len(deck_list):
+        return False, "Duplicate card instance IDs found in deck list."
+    
+    try:
+        from app.shared.cards import CardCatalog
+        cat = CardCatalog.get_instance()
+        for cid in deck_list:
+            def_obj = cat.get_definition(cid)
+            if not def_obj:
+                return False, f"Invalid card instance ID '{cid}' not recognized in catalog."
+    except Exception:
+        pass
+    return True, "Deck is valid."
+
 class ClientState:
-    def __init__(self):
-        self.player_id: Optional[str] = None
+    def __init__(self, player_id: Optional[str] = None):
+        self.player_id: Optional[str] = player_id
         self.current_state: Dict[str, Any] = {}
         
         self.latest_server_seq_num: int = 0
@@ -29,11 +62,8 @@ class ClientState:
         if "seq_num" in pdu:
             self.latest_server_seq_num = pdu["seq_num"]
 
-        if ptype == "MATCH_START":
-            if "player_id" in pdu:
-                self.player_id = pdu["player_id"]
-        elif ptype == "PLAYER_ASSIGNMENT":
-            if "player_id" in pdu:
+        if ptype in ("MATCH_START", "PLAYER_ASSIGNMENT"):
+            if "player_id" in pdu and not self.player_id:
                 self.player_id = pdu["player_id"]
         elif ptype == "GAME_STATE_UPDATE":
             self.latest_state_seq_num = pdu.get("seq_num", self.latest_state_seq_num)
@@ -87,7 +117,7 @@ class ClientState:
 
     def build_player_ready(self, deck_list: Optional[List[str]] = None) -> Dict[str, Any]:
         pid = self.player_id or "player_1"
-        dl = deck_list if deck_list is not None else ["mountain_001"] * 20 + ["lightning_bolt_001"] * 20
+        dl = deck_list if deck_list is not None else build_default_development_deck()
         return ClientActionFactory.player_ready(self.latest_server_seq_num, pid, dl)
 
     def build_priority_pass(self) -> Dict[str, Any]:
