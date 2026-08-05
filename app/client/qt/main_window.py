@@ -50,6 +50,11 @@ class MainWindow(QMainWindow):
         self.controller.state_changed.connect(self._on_state_changed)
         self.controller.protocol_error.connect(self._on_protocol_error)
         self.controller.game_over.connect(self._on_game_over)
+        self.controller.mulligan_prompt.connect(self._on_mulligan_prompt)
+        self.controller.trigger_prompt.connect(self._on_trigger_prompt)
+        self.controller.trigger_order_prompt.connect(self._on_trigger_order_prompt)
+        self.controller.discard_prompt.connect(self._on_discard_prompt)
+        self.controller.damage_order_prompt.connect(self._on_damage_order_prompt)
 
     @Slot(str)
     def _on_connection_changed(self, status: str):
@@ -99,3 +104,69 @@ class MainWindow(QMainWindow):
     def _on_return_lobby(self):
         self.controller.state.is_game_over = False
         self.stack.setCurrentIndex(1)
+
+    @Slot(dict)
+    def _on_mulligan_prompt(self, pdu: dict):
+        from app.client.qt.dialogs.mulligan_dialog import MulliganDialog
+        hand = self.controller.state.current_state.get("hand", [])
+        taken = pdu.get("mulligans_taken", 0)
+        dlg = MulliganDialog(hand=hand, mulligans_taken=taken, parent=self)
+        if dlg.exec():
+            pdu_out = ClientActionFactory.mulligan_choice(
+                seq_num=self.controller.state.last_seq_num,
+                keep=dlg.keep_choice,
+                cards_to_bottom=dlg.cards_to_bottom
+            )
+            self.controller.send_action(pdu_out)
+
+    @Slot(dict)
+    def _on_trigger_prompt(self, pdu: dict):
+        from app.client.qt.dialogs.trigger_choice_dialog import TriggerChoiceDialog
+        dlg = TriggerChoiceDialog(pdu=pdu, parent=self)
+        if dlg.exec():
+            pdu_out = ClientActionFactory.trigger_choice_response(
+                seq_num=self.controller.state.last_seq_num,
+                trigger_id=pdu.get("trigger_id", ""),
+                accept=dlg.accept_choice,
+                targets=dlg.selected_targets
+            )
+            self.controller.send_action(pdu_out)
+
+    @Slot(dict)
+    def _on_trigger_order_prompt(self, pdu: dict):
+        from app.client.qt.dialogs.trigger_order_dialog import TriggerOrderDialog
+        trgs = pdu.get("trigger_ids", [])
+        dlg = TriggerOrderDialog(trigger_ids=trgs, parent=self)
+        if dlg.exec():
+            pdu_out = ClientActionFactory.trigger_order_response(
+                seq_num=self.controller.state.last_seq_num,
+                trigger_order=dlg.ordered_triggers
+            )
+            self.controller.send_action(pdu_out)
+
+    @Slot(dict)
+    def _on_discard_prompt(self, pdu: dict):
+        from app.client.qt.dialogs.discard_dialog import DiscardDialog
+        hand = self.controller.state.current_state.get("hand", [])
+        cnt = pdu.get("count", 1)
+        dlg = DiscardDialog(hand=hand, count=cnt, parent=self)
+        if dlg.exec():
+            pdu_out = ClientActionFactory.discard(
+                seq_num=self.controller.state.last_seq_num,
+                card_ids=dlg.discarded_cards
+            )
+            self.controller.send_action(pdu_out)
+
+    @Slot(dict)
+    def _on_damage_order_prompt(self, pdu: dict):
+        from app.client.qt.dialogs.damage_order_dialog import DamageOrderDialog
+        atk_id = pdu.get("attacker_id", "")
+        blks = pdu.get("blockers", [])
+        dlg = DamageOrderDialog(attacker_id=atk_id, blockers=blks, parent=self)
+        if dlg.exec():
+            pdu_out = ClientActionFactory.assign_damage_order(
+                seq_num=self.controller.state.last_seq_num,
+                attacker_id=atk_id,
+                blocker_order=dlg.ordered_blockers
+            )
+            self.controller.send_action(pdu_out)
