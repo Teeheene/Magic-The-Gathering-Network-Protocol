@@ -1,3 +1,8 @@
+"""
+MTGNP Graphical Desktop Client UI implementation built with Python tkinter.
+Reuses the authoritative client state store, TCP socket connection, and framed PDU serializer.
+"""
+
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from typing import Dict, Any, List, Optional, Callable
