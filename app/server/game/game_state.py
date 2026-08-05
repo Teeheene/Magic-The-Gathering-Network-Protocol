@@ -51,7 +51,7 @@ class GameState:
             "stack": copy.deepcopy(self.stack),
             "battlefield": copy.deepcopy(self.battlefield),
             "graveyard": copy.deepcopy(self.graveyards),
-            "hand": copy.deepcopy(self.hands.get(viewing_player, [])),
+            "hand": {viewing_player: copy.deepcopy(self.hands.get(viewing_player, []))},
             "hand_counts": {p: len(cards) for p, cards in self.hands.items() if p != viewing_player},
             "library_counts": {p: len(cards) for p, cards in self.libraries.items()},
             "land_played_this_turn": self.land_played_this_turn,
