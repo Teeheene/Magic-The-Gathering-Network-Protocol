@@ -63,7 +63,6 @@ class ClientState:
         lines.append(f"Hand Counts (Opponent): {st.get('hand_counts', {})}")
         lines.append(f"Graveyards: {st.get('graveyard', {})}")
         
-        # Battlefields
         bf = st.get("battlefield", {})
         lines.append("Battlefields:")
         for p, perms in bf.items():
@@ -74,7 +73,6 @@ class ClientState:
                 else:
                     lines.append(f"    - Permanent {perm.get('id')}: Tapped={perm.get('tapped')}")
 
-        # Stack (Bottom to Top order)
         stk = st.get("stack", [])
         lines.append(f"Stack (Bottom -> Top, count={len(stk)}):")
         for idx, item in enumerate(stk):
@@ -86,7 +84,6 @@ class ClientState:
         lines.append("=========================================================")
         return "\n".join(lines)
 
-    # Action Payload Builders (echoing current seq_num)
     def build_priority_pass(self) -> Dict[str, Any]:
         return {"type": "PRIORITY_PASS", "seq_num": self.last_seq_num}
 
