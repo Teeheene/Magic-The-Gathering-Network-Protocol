@@ -1,6 +1,7 @@
 import socket
 import json
 import struct
+import threading
 from typing import Dict, Any, Optional
 from PySide6.QtCore import QObject, Signal, Slot, QThread
 from app.client.state import ClientState
@@ -17,6 +18,7 @@ class ClientConnectionWorker(QObject):
         self.sock: Optional[socket.socket] = None
         self.verbose = verbose
         self._running = False
+        self._reader_thread: Optional[threading.Thread] = None
 
     @Slot(str, int)
     def connect_to_server(self, host: str, port: int) -> None:
@@ -27,7 +29,10 @@ class ClientConnectionWorker(QObject):
             if self.verbose:
                 print(f"[QT CLIENT CONNECTED] {host}:{port}")
             self.connected.emit()
-            self._listen_loop()
+            
+            # Non-blocking dedicated reader thread so event loop remains free for send_pdu
+            self._reader_thread = threading.Thread(target=self._listen_loop, daemon=True)
+            self._reader_thread.start()
         except Exception as e:
             self.transport_error.emit(str(e))
             self.disconnected.emit(str(e))
@@ -111,12 +116,10 @@ class ClientController(QObject):
         self.state = ClientState()
         self.verbose = verbose
         
-        # Instantiate worker and move to dedicated QThread to prevent UI freezing
         self.worker = ClientConnectionWorker(verbose=verbose)
         self.worker_thread = QThread()
         self.worker.moveToThread(self.worker_thread)
 
-        # Wire worker signals
         self.worker.connected.connect(self._on_worker_connected)
         self.worker.disconnected.connect(self._on_worker_disconnected)
         self.worker.transport_error.connect(self._on_worker_transport_error)
