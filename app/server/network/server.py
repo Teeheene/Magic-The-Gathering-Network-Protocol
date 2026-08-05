@@ -3,7 +3,7 @@ from app.server.game.session import GameSession
 from app.server.core.player import Player
 
 class Server:
-    def __init__(self, host="0.0.0.0", port=6767, max_clients=2):
+    def __init__(self, host="0.0.0.0", port=4444, max_clients=2):
         self.host = host
         self.port = port
 
