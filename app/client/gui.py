@@ -69,11 +69,11 @@ class GraphicalGameClient(tk.Tk):
         self.opp_battlefield_frame = ttk.Frame(self.opp_panel, style="Panel.TFrame")
         self.opp_battlefield_frame.pack(fill=tk.X, expand=True, pady=5)
 
-        # 2. Center Split (Left: Stack, Center: Board, Right: Log)
+        # 2. Center Split
         self.center_frame = ttk.Frame(self.main_container, style="TFrame")
         self.center_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
-        # Center Left: Stack Panel
+        # Stack Panel
         self.stack_panel = ttk.Frame(self.center_frame, style="Panel.TFrame", padding=6, width=230)
         self.stack_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 5))
         self.stack_panel.pack_propagate(False)
@@ -82,7 +82,7 @@ class GraphicalGameClient(tk.Tk):
         self.stack_listbox = tk.Listbox(self.stack_panel, bg=self.CARD_BG, fg=self.TEXT_COLOR, selectbackground=self.ACCENT_BLUE, bd=0, highlightthickness=0, font=("Consolas", 9))
         self.stack_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
 
-        # Center Main: Status & Shared Board
+        # Board Panel
         self.board_panel = ttk.Frame(self.center_frame, style="Panel.TFrame", padding=6)
         self.board_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5)
 
@@ -95,7 +95,7 @@ class GraphicalGameClient(tk.Tk):
         self.shared_battlefield_frame = ttk.Frame(self.board_panel, style="Panel.TFrame")
         self.shared_battlefield_frame.pack(fill=tk.BOTH, expand=True, pady=5)
 
-        # Center Right: Log Panel
+        # Log Panel
         self.log_panel = ttk.Frame(self.center_frame, style="Panel.TFrame", padding=6, width=280)
         self.log_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
         self.log_panel.pack_propagate(False)
@@ -111,8 +111,8 @@ class GraphicalGameClient(tk.Tk):
         self.local_header_lbl = ttk.Label(self.local_panel, text="You (Local): [Waiting...] | Life: 20 | Library: 0 | GY: 0", style="Header.TLabel", background=self.PANEL_BG)
         self.local_header_lbl.pack(anchor=tk.W)
 
-        # Hand Container
-        ttk.Label(self.local_panel, text="Your Hand (Click to select card)", style="Header.TLabel", background=self.PANEL_BG).pack(anchor=tk.W, pady=(5, 2))
+        # Hand Frame
+        ttk.Label(self.local_panel, text="Your Hand (Click card to select)", style="Header.TLabel", background=self.PANEL_BG).pack(anchor=tk.W, pady=(5, 2))
         self.hand_container = ttk.Frame(self.local_panel, style="Panel.TFrame")
         self.hand_container.pack(fill=tk.X, expand=True, pady=2)
 
@@ -128,6 +128,9 @@ class GraphicalGameClient(tk.Tk):
 
         self.cast_spell_btn = tk.Button(self.action_bar, text="Cast Spell", bg=self.ACCENT_YELLOW, fg="#000000", font=("Segoe UI", 9, "bold"), command=self._on_cast_spell_click)
         self.cast_spell_btn.pack(side=tk.LEFT, padx=3)
+
+        self.activate_ability_btn = tk.Button(self.action_bar, text="Activate Ability", bg=self.ACCENT_BLUE, fg="#000000", font=("Segoe UI", 9, "bold"), command=self._on_activate_ability_click)
+        self.activate_ability_btn.pack(side=tk.LEFT, padx=3)
 
         self.concede_btn = tk.Button(self.action_bar, text="Concede", bg=self.ACCENT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), command=self._on_concede_click)
         self.concede_btn.pack(side=tk.RIGHT, padx=3)
@@ -173,7 +176,6 @@ class GraphicalGameClient(tk.Tk):
         if not st:
             return
 
-        # Status Bar
         self.status_bar.config(
             text=f"Turn: {st.get('turn', 0)} | Phase: {st.get('phase', 'LOBBY')} | Active: {st.get('active_player', '-')} | Priority: {st.get('priority_holder', '-')}"
         )
@@ -187,7 +189,6 @@ class GraphicalGameClient(tk.Tk):
         opp_p = [p for p in lifes.keys() if p != local_p]
         opp_id = opp_p[0] if opp_p else "Opponent"
 
-        # Header Labels
         self.opp_header_lbl.config(
             text=f"Opponent ({opp_id}): Life {lifes.get(opp_id, 20)} | Hand Cards: {h_counts.get(opp_id, 0)} | Library: {libs.get(opp_id, 0)} | GY: {len(gys.get(opp_id, []))}"
         )
@@ -223,17 +224,19 @@ class GraphicalGameClient(tk.Tk):
         for idx, item in enumerate(stk):
             self.stack_listbox.insert(tk.END, f"[{idx}] {item.get('source')} ({item.get('item_type')}) -> {item.get('targets')}")
 
-        # Priority Control Enabling
+        # Priority Controls Enabling
         has_priority = (st.get("priority_holder") == local_p)
         if has_priority:
             self.pass_btn.config(state=tk.NORMAL)
             self.play_land_btn.config(state=tk.NORMAL)
             self.cast_spell_btn.config(state=tk.NORMAL)
+            self.activate_ability_btn.config(state=tk.NORMAL)
             self.action_status_lbl.config(text="YOUR PRIORITY", foreground=self.ACCENT_GREEN)
         else:
             self.pass_btn.config(state=tk.DISABLED)
             self.play_land_btn.config(state=tk.DISABLED)
             self.cast_spell_btn.config(state=tk.DISABLED)
+            self.activate_ability_btn.config(state=tk.DISABLED)
             self.action_status_lbl.config(text=f"Waiting for {st.get('priority_holder', 'opponent')}...", foreground=self.MUTED_TEXT)
 
     def _create_hand_card(self, parent: tk.Widget, card_id: str):
@@ -250,11 +253,9 @@ class GraphicalGameClient(tk.Tk):
         card_frame = tk.Frame(parent, bg=bg_col, bd=2, relief=tk.RAISED if is_selected else tk.FLAT, padx=6, pady=4, cursor="hand2")
         card_frame.pack(side=tk.LEFT, padx=4, pady=2)
 
-        # Accent Bar
         bar = tk.Frame(card_frame, bg=accent_color, height=3)
         bar.pack(fill=tk.X, pady=(0, 3))
 
-        # Title & Cost
         lbl_title = tk.Label(card_frame, text=name, bg=bg_col, fg=self.TEXT_COLOR, font=("Segoe UI", 9, "bold"))
         lbl_title.pack(anchor=tk.W)
 
@@ -266,7 +267,6 @@ class GraphicalGameClient(tk.Tk):
             lbl_pt = tk.Label(card_frame, text=pt_str, bg=bg_col, fg=self.ACCENT_YELLOW, font=("Segoe UI", 9, "bold"))
             lbl_pt.pack(anchor=tk.E)
 
-        # Bind click selection
         def select_card(e):
             self.selected_card_id = card_id
             self.render_state()
@@ -280,10 +280,11 @@ class GraphicalGameClient(tk.Tk):
         name = def_obj.name if def_obj else cid
         tapped = perm.get("tapped", False)
 
-        bg_col = "#2a2b3c" if not is_opponent else "#212230"
+        is_selected = (self.selected_permanent_id == cid)
+        bg_col = self.CARD_SELECTED_BG if is_selected else ("#2a2b3c" if not is_opponent else "#212230")
         border_col = self.ACCENT_RED if tapped else self.ACCENT_BLUE
 
-        perm_frame = tk.Frame(parent, bg=bg_col, bd=2, relief=tk.GROOVE, padx=6, pady=4)
+        perm_frame = tk.Frame(parent, bg=bg_col, bd=2, relief=tk.RAISED if is_selected else tk.GROOVE, padx=6, pady=4, cursor="hand2")
         perm_frame.pack(side=tk.LEFT, padx=4, pady=2)
 
         status_str = "[TAPPED]" if tapped else "[READY]"
@@ -300,6 +301,13 @@ class GraphicalGameClient(tk.Tk):
             if perm.get("summoning_sick"):
                 lbl_sick = tk.Label(perm_frame, text="*Sick*", bg=bg_col, fg=self.MUTED_TEXT, font=("Segoe UI", 7, "italic"))
                 lbl_sick.pack(anchor=tk.E)
+
+        def select_perm(e):
+            self.selected_permanent_id = cid
+            self.render_state()
+
+        perm_frame.bind("<Button-1>", select_perm)
+        lbl_name.bind("<Button-1>", select_perm)
 
     def _on_pass_click(self):
         if self.send_action_fn:
@@ -332,6 +340,19 @@ class GraphicalGameClient(tk.Tk):
             pdu = self.client_state.build_cast_spell(self.selected_card_id, targets, mana_payment)
             self.send_action_fn(pdu)
             self.log_event(f"Sent: Cast Spell ({self.selected_card_id})")
+
+    def _on_activate_ability_click(self):
+        if not self.selected_permanent_id:
+            messagebox.showinfo("Select Permanent", "Please select a permanent on your battlefield first.")
+            return
+
+        target_input = simpledialog.askstring("Ability Target", f"Target ID for ability on {self.selected_permanent_id} (leave blank if none):")
+        targets = [target_input.strip()] if target_input else []
+
+        if self.send_action_fn:
+            pdu = self.client_state.build_activate_ability(self.selected_permanent_id, 0, targets, {"tap": True})
+            self.send_action_fn(pdu)
+            self.log_event(f"Sent: Activate Ability on ({self.selected_permanent_id})")
 
     def _on_concede_click(self):
         if messagebox.askyesno("Concede", "Are you sure you want to concede the game?"):
