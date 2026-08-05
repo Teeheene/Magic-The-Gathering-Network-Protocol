@@ -138,12 +138,16 @@ class GameView(QWidget):
         self._refresh_action_panel(has_priority)
 
     def _refresh_action_panel(self, has_priority: bool):
+        phase = self.current_state.get("phase", "LOBBY")
         self.action_panel.update_context(
             selected_card=self.interaction.selected_hand_card,
             selected_perm=self.interaction.selected_permanent,
             targets=self.interaction.selected_targets,
+            phase=phase,
             has_priority=has_priority,
-            action_pending=self.interaction.action_pending
+            action_pending=self.interaction.action_pending,
+            attacker_count=len(self.interaction.selected_attackers),
+            blocker_count=len(self.interaction.selected_blockers)
         )
 
     def _on_hand_card_clicked(self, cid: str):
