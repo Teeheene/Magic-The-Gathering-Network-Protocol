@@ -8,8 +8,9 @@ from tkinter import ttk, messagebox, simpledialog
 from typing import Dict, Any, List, Optional, Callable
 import queue
 import json
-from app.client.__main__ import ClientState
-from app.server.game.cards import CardCatalog
+from app.client.state import ClientState
+from app.shared.cards import CardCatalog
+from app.client.actions import ClientActionFactory
 
 class GraphicalGameClient(tk.Tk):
     BG_DARK = "#1e1e2e"
@@ -450,7 +451,7 @@ class GraphicalGameClient(tk.Tk):
     def _on_concede_click(self):
         if messagebox.askyesno("Concede", "Are you sure you want to concede the game?"):
             if self.send_action_fn:
-                pdu = self.client_state.build_concede(self.client_state.player_id or "player_1")
+                pdu = self.client_state.build_concede()
                 self.send_action_fn(pdu)
                 self.log_event("Sent: Concede")
 
