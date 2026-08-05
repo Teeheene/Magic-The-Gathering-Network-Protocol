@@ -450,5 +450,37 @@ class GraphicalGameClient(tk.Tk):
                 self.log_event("Sent: Concede")
 
 if __name__ == "__main__":
-    app = GraphicalGameClient()
-    app.mainloop()
+    import socket
+    import threading
+    from app.client.__main__ import send_framed_pdu, read_framed_pdu
+
+    host = input("Enter host [127.0.0.1]: ").strip() or "127.0.0.1"
+    port_str = input("Enter port [4444]: ").strip() or "4444"
+    port = int(port_str)
+
+    try:
+        client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_sock.connect((host, port))
+        print(f"Connected to MTGNP server at {host}:{port}")
+
+        def send_action(pdu: Dict[str, Any]):
+            send_framed_pdu(client_sock, pdu)
+
+        app = GraphicalGameClient(send_action_fn=send_action)
+
+        def listen_loop():
+            while True:
+                try:
+                    pdu = read_framed_pdu(client_sock)
+                    if not pdu:
+                        break
+                    app.enqueue_pdu(pdu)
+                except Exception:
+                    break
+
+        t = threading.Thread(target=listen_loop, daemon=True)
+        t.start()
+
+        app.mainloop()
+    except Exception as e:
+        print(f"Failed to connect or run GUI: {e}")

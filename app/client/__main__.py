@@ -187,6 +187,42 @@ def read_framed_pdu(sock: socket.socket) -> Optional[Dict[str, Any]]:
     return json.loads(data.decode("utf-8"))
 
 def main():
+    import sys
+    if "--cli" not in sys.argv:
+        try:
+            from app.client.gui import GraphicalGameClient
+            import threading
+            host = input("Enter host [127.0.0.1]: ").strip() or "127.0.0.1"
+            port_str = input("Enter port [4444]: ").strip() or "4444"
+            port = int(port_str)
+
+            client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            client_sock.connect((host, port))
+            print(f"Connected to MTGNP server at {host}:{port}")
+
+            def send_action(pdu: Dict[str, Any]):
+                send_framed_pdu(client_sock, pdu)
+
+            app = GraphicalGameClient(send_action_fn=send_action)
+
+            def listen_loop():
+                while True:
+                    try:
+                        pdu = read_framed_pdu(client_sock)
+                        if not pdu:
+                            break
+                        app.enqueue_pdu(pdu)
+                    except Exception:
+                        break
+
+            t = threading.Thread(target=listen_loop, daemon=True)
+            t.start()
+
+            app.mainloop()
+            return
+        except Exception as e:
+            print(f"GUI launch failed or unavailable ({e}). Falling back to CLI client...")
+
     host = input("Enter host [127.0.0.1]: ").strip() or "127.0.0.1"
     port_str = input("Enter port [4444]: ").strip() or "4444"
     port = int(port_str)
