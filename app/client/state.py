@@ -32,6 +32,26 @@ class ClientState:
             self.is_game_over = True
             self.game_over_info = pdu
 
+    def render(self) -> str:
+        if self.last_error:
+            err = self.last_error
+            return f"[ERROR] Code: {err.get('code')} - Message: {err.get('message')}"
+
+        st = self.current_state
+        lines = []
+        lines.append(f"Turn {st.get('turn', 1)} | Phase: {st.get('phase', 'UNKNOWN')}")
+        lines.append(f"Life Totals: {st.get('life_totals', {})}")
+        lines.append(f"Hand Counts: {st.get('hand_counts', {})}")
+        lines.append(f"My Hand: {st.get('hand', [])}")
+        
+        stack = st.get('stack', [])
+        if stack:
+            lines.append("Stack:")
+            for idx, item in enumerate(stack):
+                lines.append(f"  [{idx}] ID: {item.get('stack_item_id', '')} Source: {item.get('source', '')}")
+        
+        return "\n".join(lines)
+
     def build_player_ready(self, deck_name: str = "default_deck") -> Dict[str, Any]:
         return ClientActionFactory.player_ready(self.last_seq_num, deck_name)
 

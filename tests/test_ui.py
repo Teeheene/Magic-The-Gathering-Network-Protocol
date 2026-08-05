@@ -3,7 +3,7 @@ import tkinter as tk
 from unittest.mock import patch
 from typing import Dict, Any, List
 from app.client.gui import GraphicalGameClient
-from app.client.__main__ import ClientState
+from app.client.state import ClientState
 
 class TestGraphicalClientUI(unittest.TestCase):
     def setUp(self):
@@ -12,16 +12,23 @@ class TestGraphicalClientUI(unittest.TestCase):
             self.sent_pdus.append(pdu)
 
         self.client_state = ClientState()
-        self.app = GraphicalGameClient(client_state=self.client_state, send_action_fn=send_fn)
-        if hasattr(self.app, "_after_id") and self.app._after_id:
-            try:
-                self.app.after_cancel(self.app._after_id)
-            except Exception:
-                pass
-        self.app._after_id = None
+        try:
+            self.app = GraphicalGameClient(client_state=self.client_state, send_action_fn=send_fn)
+            if hasattr(self.app, "_after_id") and self.app._after_id:
+                try:
+                    self.app.after_cancel(self.app._after_id)
+                except Exception:
+                    pass
+            self.app._after_id = None
+        except tk.TclError:
+            self.skipTest("Tkinter display environment unavailable")
 
     def tearDown(self):
-        self.app.destroy()
+        if hasattr(self, "app") and self.app:
+            try:
+                self.app.destroy()
+            except Exception:
+                pass
 
     def test_gui_initialization_and_title(self):
         self.assertIn("MTGNP", self.app.title())
