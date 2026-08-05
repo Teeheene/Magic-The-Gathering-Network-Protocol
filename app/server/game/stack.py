@@ -5,7 +5,7 @@ from app.server.interfaces import TransportInterface, SeqNumProvider
 class StackItem:
     def __init__(self, stack_item_id: str, item_type: str, source: str, controller: str, targets: List[str], effect_fn: Optional[Callable] = None, effect_payload: Optional[Dict[str, Any]] = None):
         self.stack_item_id = stack_item_id
-        self.item_type = item_type # SPELL | ABILITY | TRIGGER_ABILITY
+        self.item_type = item_type
         self.source = source
         self.controller = controller
         self.targets = list(targets)
@@ -71,8 +71,7 @@ class GameStack:
         for idx, item in enumerate(self._items):
             if item.stack_item_id == stack_item_id:
                 removed = self._items.pop(idx)
-                if idx < len(self.game_state.stack):
-                    self.game_state.stack.pop(idx)
+                self.game_state.stack = [s for s in self.game_state.stack if s.get("stack_item_id") != stack_item_id]
                 return removed
         return None
 
@@ -86,7 +85,6 @@ class GameStack:
             if validate_target_fn:
                 is_legal = validate_target_fn(t, item, self.game_state)
             else:
-                # Default validation: check if player_id or existing permanent on battlefield or item in stack
                 if t in self.game_state.players:
                     is_legal = True
                 elif self.game_state.get_permanent(t) is not None:
@@ -115,6 +113,12 @@ class GameStack:
         state_changes: List[Dict[str, Any]] = []
 
         if not targets_valid:
+            # Fizzle -> move source spell card to graveyard once
+            if item.item_type == "SPELL" and item.source:
+                gy = self.game_state.graveyards.get(item.controller, [])
+                if item.source not in gy:
+                    gy.append(item.source)
+
             resolve_pdu = {
                 "type": "STACK_RESOLVE",
                 "seq_num": seq,
@@ -127,7 +131,22 @@ class GameStack:
             return {"result": "FIZZLE", "item": item, "pdu": resolve_pdu}
 
         if item.effect_fn:
-            state_changes = item.effect_fn(item, self.game_state) or []
+            state_changes = item.effect_fn(item, self.game_state, self) or []
+
+        # Move resolved spell card to graveyard once if instant/sorcery
+        if item.item_type == "SPELL" and item.source:
+            catalog_obj = None
+            try:
+                from app.shared.cards import CardCatalog
+                catalog_obj = CardCatalog.get_instance()
+            except Exception:
+                pass
+            
+            def_obj = catalog_obj.get_definition(item.source) if catalog_obj else None
+            if def_obj and (def_obj.is_instant() or def_obj.is_sorcery()):
+                gy = self.game_state.graveyards.get(item.controller, [])
+                if item.source not in gy:
+                    gy.append(item.source)
 
         resolve_pdu = {
             "type": "STACK_RESOLVE",
