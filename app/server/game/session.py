@@ -1,6 +1,6 @@
 import socket
 import time
-from core.player import Player
+from app.server.core.player import Player
 
 class GameSession:
     def __init__(self, max_players):
