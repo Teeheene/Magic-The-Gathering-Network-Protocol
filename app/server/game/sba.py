@@ -41,24 +41,29 @@ class StateBasedActions:
             # 2. Check creature toughness <= 0 & lethal damage >= toughness
             for player in list(game_state.players):
                 perms = game_state.battlefield[player]
-                for idx, perm in enumerate(list(perms)):
+                dead_creatures = []
+                for perm in list(perms):
                     if "power" in perm: # Creature
                         toughness = perm.get("toughness", 0)
                         damage = perm.get("damage", 0)
                         cid = perm.get("id", "")
 
                         if toughness <= 0 or damage >= toughness:
-                            perms.pop(idx)
-                            game_state.graveyards[player].append(cid)
-                            change = {
-                                "change_type": "CREATURE_DIED",
-                                "target": cid,
-                                "controller": player,
-                                "reason": "ZERO_TOUGHNESS" if toughness <= 0 else "LETHAL_DAMAGE"
-                            }
-                            changes_this_pass.append(change)
-                            generated_events.append(GameEvent("creature_died", {"card_id": cid, "controller": player}))
-                            break # Re-check stabilization loop
+                            reason = "ZERO_TOUGHNESS" if toughness <= 0 else "LETHAL_DAMAGE"
+                            dead_creatures.append((perm, cid, reason))
+
+                for perm, cid, reason in dead_creatures:
+                    if perm in perms:
+                        perms.remove(perm)
+                        game_state.graveyards[player].append(cid)
+                        change = {
+                            "change_type": "CREATURE_DIED",
+                            "target": cid,
+                            "controller": player,
+                            "reason": reason
+                        }
+                        changes_this_pass.append(change)
+                        generated_events.append(GameEvent("creature_died", {"card_id": cid, "controller": player}))
 
             if not changes_this_pass:
                 break # Stabilized! No further SBA changes in this pass
