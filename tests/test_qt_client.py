@@ -17,6 +17,9 @@ class TestPySide6Client(unittest.TestCase):
     def setUp(self):
         self.controller = ClientController(verbose=False)
 
+    def tearDown(self):
+        self.controller.cleanup()
+
     def test_state_authoritative_update(self):
         st = ClientState()
         pdu = {

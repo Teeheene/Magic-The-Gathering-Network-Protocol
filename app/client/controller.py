@@ -2,7 +2,7 @@ import socket
 import json
 import struct
 from typing import Dict, Any, Optional
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal, Slot, QThread
 from app.client.state import ClientState
 from app.client.actions import ClientActionFactory
 
@@ -94,7 +94,7 @@ class ClientConnectionWorker(QObject):
 class ClientController(QObject):
     state_changed = Signal(dict)
     pdu_received = Signal(dict)
-    connection_changed = Signal(str) # "connected", "disconnected", "connecting"
+    connection_changed = Signal(str)
     protocol_error = Signal(dict)
     game_over = Signal(dict)
     mulligan_prompt = Signal(dict)
@@ -110,7 +110,11 @@ class ClientController(QObject):
         super().__init__()
         self.state = ClientState()
         self.verbose = verbose
+        
+        # Instantiate worker and move to dedicated QThread to prevent UI freezing
         self.worker = ClientConnectionWorker(verbose=verbose)
+        self.worker_thread = QThread()
+        self.worker.moveToThread(self.worker_thread)
 
         # Wire worker signals
         self.worker.connected.connect(self._on_worker_connected)
@@ -121,12 +125,19 @@ class ClientController(QObject):
         self.request_connect.connect(self.worker.connect_to_server)
         self.request_send_pdu.connect(self.worker.send_pdu)
 
+        self.worker_thread.start()
+
     def connect_server(self, host: str, port: int):
         self.connection_changed.emit("connecting")
         self.request_connect.emit(host, port)
 
     def send_action(self, pdu: dict):
         self.request_send_pdu.emit(pdu)
+
+    def cleanup(self):
+        self.worker.close()
+        self.worker_thread.quit()
+        self.worker_thread.wait(1000)
 
     def _on_worker_connected(self):
         self.connection_changed.emit("connected")
@@ -159,6 +170,5 @@ class ClientController(QObject):
         elif ptype == "ASSIGN_DAMAGE_ORDER_PROMPT":
             self.damage_order_prompt.emit(pdu)
 
-        # Trigger general state update for phase changes / priority grants
         if ptype in ("PHASE_TRANSITION", "PRIORITY_GRANT", "MATCH_START", "PLAYER_ASSIGNMENT"):
             self.state_changed.emit(self.state.current_state)

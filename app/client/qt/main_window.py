@@ -170,3 +170,7 @@ class MainWindow(QMainWindow):
                 blocker_order=dlg.ordered_blockers
             )
             self.controller.send_action(pdu_out)
+
+    def closeEvent(self, event):
+        self.controller.cleanup()
+        super().closeEvent(event)
