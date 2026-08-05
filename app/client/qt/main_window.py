@@ -4,6 +4,7 @@ from app.client.controller import ClientController
 from app.client.qt.theme import MTGTheme
 from app.client.qt.views.connection_view import ConnectionView
 from app.client.qt.views.lobby_view import LobbyView
+from app.client.qt.views.game_view import GameView
 from app.client.qt.views.game_over_view import GameOverView
 from app.client.actions import ClientActionFactory
 
@@ -24,20 +25,12 @@ class MainWindow(QMainWindow):
 
         self.connection_view = ConnectionView()
         self.lobby_view = LobbyView()
-        
-        # Temporary Placeholder for Game View until Commit 4
-        self.game_view_placeholder = QWidget()
-        g_layout = QVBoxLayout(self.game_view_placeholder)
-        g_layout.setAlignment(Qt.AlignCenter)
-        self.game_view_lbl = QLabel("Game View Active (Rendering Board...)")
-        self.game_view_lbl.setStyleSheet("font-size: 18px; color: #89b4fa;")
-        g_layout.addWidget(self.game_view_lbl)
-
+        self.game_view = GameView()
         self.game_over_view = GameOverView()
 
         self.stack.addWidget(self.connection_view)  # index 0
         self.stack.addWidget(self.lobby_view)       # index 1
-        self.stack.addWidget(self.game_view_placeholder) # index 2
+        self.stack.addWidget(self.game_view)        # index 2
         self.stack.addWidget(self.game_over_view)   # index 3
 
         self._wire_signals()
@@ -77,6 +70,7 @@ class MainWindow(QMainWindow):
         self.lobby_view.update_state(pid, current_state)
 
         if phase not in ("LOBBY", "") and not self.controller.state.is_game_over:
+            self.game_view.update_view(current_state, pid)
             if self.stack.currentIndex() != 2:
                 self.stack.setCurrentIndex(2)
 
