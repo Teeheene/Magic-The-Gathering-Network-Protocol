@@ -164,42 +164,41 @@ class CombatManager:
 
             # Determine if attacker deals damage in this step
             if is_first_strike_step and not a_fs:
-                pass
-            elif not is_first_strike_step and a_fs and not a_ds:
-                pass # Only dealt damage in first strike step
+                continue
+            if not is_first_strike_step and a_fs and not a_ds:
+                continue
+            # Get blockers for this attacker
+            b_ids = [b["creature_id"] for b in self.blockers if b["blocking_id"] == aid]
+            if not b_ids:
+                # Unblocked! Deals damage to defending player
+                if a_power > 0:
+                    self.game_state.life_totals[target_player] -= a_power
+                    damage_events.append({
+                        "source": aid,
+                        "target": target_player,
+                        "amount": a_power
+                    })
             else:
-                # Get blockers for this attacker
-                b_ids = [b["creature_id"] for b in self.blockers if b["blocking_id"] == aid]
-                if not b_ids:
-                    # Unblocked! Deals damage to defending player
-                    if a_power > 0:
-                        self.game_state.life_totals[target_player] -= a_power
+                # Blocked! MTGNP 1.0 has NO trample. All damage assigned to blockers in damage order
+                ordered_blockers = self.damage_orders.get(aid, b_ids)
+                rem_damage = a_power
+                for bid in ordered_blockers:
+                    if rem_damage <= 0:
+                        break
+                    b_perm = self.game_state.get_permanent(bid)
+                    if b_perm:
+                        b_def = self.catalog.get_definition(bid)
+                        b_toughness = b_perm.get("toughness", b_def.toughness if b_def else 1)
+                        b_current_damage = b_perm.get("damage", 0)
+                        needed_lethal = max(1, b_toughness - b_current_damage)
+                        assigned = min(rem_damage, needed_lethal) if len(ordered_blockers) > 1 else rem_damage
+                        b_perm["damage"] = b_current_damage + assigned
+                        rem_damage -= assigned
                         damage_events.append({
                             "source": aid,
-                            "target": target_player,
-                            "amount": a_power
+                            "target": bid,
+                            "amount": assigned
                         })
-                else:
-                    # Blocked! MTGNP 1.0 has NO trample. All damage assigned to blockers in damage order
-                    ordered_blockers = self.damage_orders.get(aid, b_ids)
-                    rem_damage = a_power
-                    for bid in ordered_blockers:
-                        if rem_damage <= 0:
-                            break
-                        b_perm = self.game_state.get_permanent(bid)
-                        if b_perm:
-                            b_def = self.catalog.get_definition(bid)
-                            b_toughness = b_perm.get("toughness", b_def.toughness if b_def else 1)
-                            b_current_damage = b_perm.get("damage", 0)
-                            needed_lethal = max(1, b_toughness - b_current_damage)
-                            assigned = min(rem_damage, needed_lethal) if len(ordered_blockers) > 1 else rem_damage
-                            b_perm["damage"] = b_current_damage + assigned
-                            rem_damage -= assigned
-                            damage_events.append({
-                                "source": aid,
-                                "target": bid,
-                                "amount": assigned
-                            })
 
         # Blockers deal damage to attackers
         for blk in self.blockers:

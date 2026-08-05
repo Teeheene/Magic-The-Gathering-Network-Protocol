@@ -2,11 +2,12 @@ from typing import Dict, Any, Optional, List
 
 class ClientActionFactory:
     @staticmethod
-    def player_ready(seq_num: int, deck_name: str = "default_deck") -> Dict[str, Any]:
+    def player_ready(seq_num: int, player_id: str, deck_list: List[str]) -> Dict[str, Any]:
         return {
             "type": "PLAYER_READY",
             "seq_num": seq_num,
-            "deck_name": deck_name
+            "player_id": player_id,
+            "deck_list": deck_list
         }
 
     @staticmethod
@@ -25,31 +26,25 @@ class ClientActionFactory:
         }
 
     @staticmethod
-    def cast_spell(seq_num: int, card_id: str, targets: Optional[List[str]] = None, cost_payment: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
-        pdu: Dict[str, Any] = {
+    def cast_spell(seq_num: int, card_id: str, targets: Optional[List[str]] = None, mana_payment: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+        return {
             "type": "CAST_SPELL",
             "seq_num": seq_num,
-            "card_id": card_id
+            "card_id": card_id,
+            "targets": targets if targets is not None else [],
+            "mana_payment": mana_payment if mana_payment is not None else {}
         }
-        if targets:
-            pdu["targets"] = targets
-        if cost_payment:
-            pdu["cost_payment"] = cost_payment
-        return pdu
 
     @staticmethod
     def activate_ability(seq_num: int, source_id: str, ability_index: int = 0, targets: Optional[List[str]] = None, cost_payment: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
-        pdu: Dict[str, Any] = {
+        return {
             "type": "ACTIVATE_ABILITY",
             "seq_num": seq_num,
             "source_id": source_id,
-            "ability_index": ability_index
+            "ability_index": ability_index,
+            "targets": targets if targets is not None else [],
+            "cost_payment": cost_payment if cost_payment is not None else {}
         }
-        if targets:
-            pdu["targets"] = targets
-        if cost_payment:
-            pdu["cost_payment"] = cost_payment
-        return pdu
 
     @staticmethod
     def declare_attackers(seq_num: int, attackers: List[Dict[str, str]]) -> Dict[str, Any]:
@@ -116,8 +111,9 @@ class ClientActionFactory:
         }
 
     @staticmethod
-    def concede(seq_num: int) -> Dict[str, Any]:
+    def concede(seq_num: int, player_id: str) -> Dict[str, Any]:
         return {
             "type": "CONCEDE",
-            "seq_num": seq_num
+            "seq_num": seq_num,
+            "player_id": player_id
         }

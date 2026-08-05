@@ -58,7 +58,7 @@ class TestClientCore(unittest.TestCase):
         
         st = ClientState()
         st.last_seq_num = 10
-        ready_pdu = st.build_player_ready("mono_red")
+        ready_pdu = st.build_player_ready(["mountain_001"])
         transport.send_pdu(ready_pdu)
 
         th.join(timeout=2.0)
@@ -68,7 +68,7 @@ class TestClientCore(unittest.TestCase):
         self.assertEqual(len(received_pdus), 1)
         self.assertEqual(received_pdus[0]["type"], "PLAYER_READY")
         self.assertEqual(received_pdus[0]["seq_num"], 10)
-        self.assertEqual(received_pdus[0]["deck_name"], "mono_red")
+        self.assertEqual(received_pdus[0]["deck_list"], ["mountain_001"])
 
     def test_tkinter_client_initialization(self):
         app = GraphicalGameClient(client_state=ClientState())

@@ -95,15 +95,31 @@ def discard_cards(player_id: str, card_ids: List[str], game_state: GameState) ->
             })
     return changes
 
-def counter_spell(target_stack_item_id: str, game_state: GameState) -> List[Dict[str, Any]]:
-    catalog = CardCatalog.get_instance()
+def counter_spell(target_stack_item_id: str, game_state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
+    removed_item = None
+    if game_stack and hasattr(game_stack, "remove_item"):
+        removed_item = game_stack.remove_item(target_stack_item_id)
+
+    if removed_item:
+        source_card_id = removed_item.source
+        controller = removed_item.controller
+        gy = game_state.graveyards.get(controller, [])
+        if source_card_id and source_card_id not in gy:
+            gy.append(source_card_id)
+        return [{
+            "change_type": "COUNTER",
+            "target": target_stack_item_id,
+            "card_id": source_card_id
+        }]
+
     for idx, item in enumerate(list(game_state.stack)):
         if item.get("stack_item_id") == target_stack_item_id:
             removed = game_state.stack.pop(idx)
             source_card_id = removed.get("source", "")
             controller = removed.get("controller", "")
-            if source_card_id:
-                game_state.graveyards[controller].append(source_card_id)
+            gy = game_state.graveyards.get(controller, [])
+            if source_card_id and source_card_id not in gy:
+                gy.append(source_card_id)
             return [{
                 "change_type": "COUNTER",
                 "target": target_stack_item_id,

@@ -270,7 +270,7 @@ class GraphicalGameClient(tk.Tk):
 
         for w in self.hand_container.winfo_children():
             w.destroy()
-        hand_cards = st.get("hand", [])
+        hand_cards = self.client_state.get_local_hand()
         for card_id in hand_cards:
             self._create_hand_card(self.hand_container, card_id)
 

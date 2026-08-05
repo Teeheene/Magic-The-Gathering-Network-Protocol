@@ -3,6 +3,18 @@ import json
 import struct
 from typing import Dict, Any, Optional
 
+def recv_exact(sock: socket.socket, length: int) -> Optional[bytes]:
+    data = bytearray()
+    while len(data) < length:
+        try:
+            packet = sock.recv(length - len(data))
+            if not packet:
+                return None
+            data.extend(packet)
+        except Exception:
+            return None
+    return bytes(data)
+
 class ClientTransport:
     MAX_PAYLOAD_SIZE = 65535
 
@@ -26,6 +38,8 @@ class ClientTransport:
         if not self.sock:
             raise RuntimeError("Cannot send PDU: socket not connected.")
         payload = json.dumps(pdu).encode("utf-8")
+        if len(payload) > self.MAX_PAYLOAD_SIZE:
+            raise ValueError(f"Outbound payload length {len(payload)} exceeds maximum allowed ({self.MAX_PAYLOAD_SIZE}).")
         header = struct.pack(">I", len(payload))
         self.sock.sendall(header + payload)
         if self.verbose:
@@ -35,30 +49,19 @@ class ClientTransport:
     def read_pdu(self) -> Optional[Dict[str, Any]]:
         if not self.sock:
             return None
-        try:
-            header = self.sock.recv(4)
-            if not header or len(header) < 4:
-                return None
-            length = struct.unpack(">I", header)[0]
-            if length > self.MAX_PAYLOAD_SIZE:
-                raise ValueError(f"Payload length {length} exceeds maximum allowed ({self.MAX_PAYLOAD_SIZE}).")
-            
-            data = bytearray()
-            while len(data) < length:
-                packet = self.sock.recv(length - len(data))
-                if not packet:
-                    break
-                data.extend(packet)
-            
-            if len(data) < length:
-                return None
-
-            pdu = json.loads(data.decode("utf-8"))
-            if self.verbose:
-                print("[CLIENT RECEIVED PDU]")
-                print(json.dumps(pdu, indent=2))
-            return pdu
-        except Exception as e:
-            if self.verbose:
-                print(f"[CLIENT READ ERROR] {e}")
+        header = recv_exact(self.sock, 4)
+        if not header or len(header) < 4:
             return None
+        length = struct.unpack(">I", header)[0]
+        if length > self.MAX_PAYLOAD_SIZE:
+            raise ValueError(f"Inbound payload length {length} exceeds maximum allowed ({self.MAX_PAYLOAD_SIZE}).")
+
+        data_bytes = recv_exact(self.sock, length)
+        if not data_bytes or len(data_bytes) < length:
+            return None
+
+        pdu = json.loads(data_bytes.decode("utf-8"))
+        if self.verbose:
+            print("[CLIENT RECEIVED PDU]")
+            print(json.dumps(pdu, indent=2))
+        return pdu

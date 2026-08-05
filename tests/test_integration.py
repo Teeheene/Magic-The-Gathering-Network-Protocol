@@ -8,7 +8,7 @@ from app.server.game.combat import CombatManager
 from app.server.game.triggers import TriggerManager
 from app.server.game.sba import StateBasedActions
 from app.server.game.events import GameEvent
-from app.client.__main__ import ClientState
+from app.client.state import ClientState
 from tests.test_priority_stack import MockTransport, MockPhaseManager, MockSeqNumProvider
 
 class TestGameplayIntegrationScenario(unittest.TestCase):

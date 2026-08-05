@@ -56,7 +56,13 @@ def render_cli(state_dict: Dict[str, Any], local_pid: Optional[str]) -> None:
     else:
         print("  Battlefield: (empty)")
 
-    my_hand = state_dict.get("hand", [])
+    raw_hand = state_dict.get("hand", {})
+    if isinstance(raw_hand, dict):
+        my_hand = raw_hand.get(my_pid, [])
+    elif isinstance(raw_hand, list):
+        my_hand = raw_hand
+    else:
+        my_hand = []
     print(f"  Hand ({len(my_hand)}): {', '.join(my_hand) if my_hand else '(empty)'}")
     print("=" * 60 + "\n")
 
