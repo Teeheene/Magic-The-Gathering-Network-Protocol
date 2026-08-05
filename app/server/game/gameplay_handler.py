@@ -89,10 +89,11 @@ class GameplayHandler:
 
         # Define resolution effect wrapper
         def make_resolution_effect(def_obj: CardDefinition, c_id: str, ctrl: str, h_fn: Optional[Any]):
-            def effect_fn(item: StackItem, state: GameState) -> List[Dict[str, Any]]:
+            def effect_fn(item: StackItem, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
                 changes = []
+                stk = game_stack or self.stack
                 if h_fn:
-                    changes = h_fn(item, state) or []
+                    changes = h_fn(item, state, stk) or []
 
                 if def_obj.is_permanent():
                     instance = CardInstance(c_id, def_obj, ctrl)

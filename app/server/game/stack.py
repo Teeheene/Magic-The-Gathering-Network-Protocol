@@ -113,7 +113,6 @@ class GameStack:
         state_changes: List[Dict[str, Any]] = []
 
         if not targets_valid:
-            # Fizzle -> move source spell card to graveyard once
             if item.item_type == "SPELL" and item.source:
                 gy = self.game_state.graveyards.get(item.controller, [])
                 if item.source not in gy:
@@ -131,17 +130,25 @@ class GameStack:
             return {"result": "FIZZLE", "item": item, "pdu": resolve_pdu}
 
         if item.effect_fn:
-            import inspect
             try:
-                sig = inspect.signature(item.effect_fn)
-                if len(sig.parameters) >= 3:
-                    state_changes = item.effect_fn(item, self.game_state, self) or []
-                else:
-                    state_changes = item.effect_fn(item, self.game_state) or []
-            except Exception:
-                state_changes = item.effect_fn(item, self.game_state) or []
+                state_changes = item.effect_fn(item, self.game_state, self) or []
+            except Exception as err:
+                resolve_pdu = {
+                    "type": "STACK_RESOLVE",
+                    "seq_num": seq,
+                    "stack_item_id": item.stack_item_id,
+                    "result": "FIZZLE",
+                    "state_changes": []
+                }
+                if self.transport:
+                    self.transport.broadcast(resolve_pdu)
+                return {
+                    "result": "ERROR",
+                    "error": str(err),
+                    "stack_item_id": item.stack_item_id,
+                    "state_changes": []
+                }
 
-        # Move resolved spell card to graveyard once if instant/sorcery
         if item.item_type == "SPELL" and item.source:
             catalog_obj = None
             try:
