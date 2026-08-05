@@ -176,7 +176,12 @@ class GraphicalGameClient(tk.Tk):
     def _handle_pdu(self, pdu: Dict[str, Any]):
         self.client_state.update_authoritative_state(pdu)
         ptype = pdu.get("type")
-        if ptype == "GAME_STATE_UPDATE":
+        if ptype in ("MATCH_START", "PLAYER_ASSIGNMENT"):
+            pid = pdu.get("player_id", "")
+            if pid:
+                self.client_state.player_id = pid
+            self.log_event(f"Match Connected: You are {self.client_state.player_id or 'Player'}")
+        elif ptype == "GAME_STATE_UPDATE":
             st = self.client_state.current_state
             self.log_event(f"State Update: Turn {st.get('turn')} | Phase: {st.get('phase')}")
         elif ptype == "PHASE_TRANSITION":
@@ -240,7 +245,7 @@ class GraphicalGameClient(tk.Tk):
 
         local_p = self.client_state.player_id or "player_1"
         opp_p = [p for p in lifes.keys() if p != local_p]
-        opp_id = opp_p[0] if opp_p else "Opponent"
+        opp_id = opp_p[0] if opp_p else ("player_2" if local_p == "player_1" else "player_1")
 
         self.opp_header_lbl.config(
             text=f"Opponent ({opp_id}): Life {lifes.get(opp_id, 20)} | Hand Cards: {h_counts.get(opp_id, 0)} | Library: {libs.get(opp_id, 0)} | GY: {len(gys.get(opp_id, []))}"

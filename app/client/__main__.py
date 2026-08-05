@@ -14,7 +14,11 @@ class ClientState:
         self.game_over_info: Optional[Dict[str, Any]] = None
 
     def update_authoritative_state(self, pdu: Dict[str, Any]) -> None:
-        if pdu.get("type") == "GAME_STATE_UPDATE":
+        ptype = pdu.get("type")
+        if ptype in ("MATCH_START", "PLAYER_ASSIGNMENT", "WELCOME"):
+            if "player_id" in pdu:
+                self.player_id = pdu["player_id"]
+        elif ptype == "GAME_STATE_UPDATE":
             self.last_seq_num = pdu.get("seq_num", self.last_seq_num)
             # Full replacement of local view state!
             self.current_state = pdu.get("state", {})
