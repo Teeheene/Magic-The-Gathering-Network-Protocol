@@ -26,14 +26,11 @@ class GameView(QWidget):
         main_layout.setContentsMargins(8, 8, 8, 8)
         main_layout.setSpacing(6)
 
-        # 1. Top Phase Bar
         self.phase_bar = PhaseBarWidget()
         main_layout.addWidget(self.phase_bar)
 
-        # 2. Main Horizontal Splitter (Board View Left, Sidebar Right)
         splitter = QSplitter(Qt.Horizontal)
 
-        # Left Section: Opponent HUD, Battlefield, Local HUD, Local Hand
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -53,7 +50,6 @@ class GameView(QWidget):
 
         splitter.addWidget(left_widget)
 
-        # Right Section: Narrow Sidebar for Stack & Event Log
         right_widget = QWidget()
         right_widget.setMaximumWidth(360)
         right_widget.setMinimumWidth(260)
@@ -74,7 +70,6 @@ class GameView(QWidget):
 
         main_layout.addWidget(splitter, 1)
 
-        # 3. Contextual Action Panel
         self.action_panel = ActionPanel()
         self.action_panel.pass_priority_requested.connect(self._on_pass_priority)
         self.action_panel.play_land_requested.connect(self._on_play_land)
