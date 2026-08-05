@@ -193,13 +193,17 @@ class GraphicalGameClient(tk.Tk):
             self.log_event(f"Stack Resolve: {pdu.get('stack_item_id')} -> {pdu.get('result')}")
         elif ptype == "MULLIGAN_PROMPT":
             self._show_mulligan_dialog(pdu)
+        elif ptype == "TRIGGER_ORDER":
+            self._show_trigger_order_dialog(pdu)
         elif ptype == "TRIGGER_CHOICE":
             self._show_trigger_choice_dialog(pdu)
         elif ptype == "DISCARD_PROMPT":
             self._show_discard_dialog(pdu)
         elif ptype == "GAME_OVER":
-            self.log_event(f"GAME OVER: Winner {pdu.get('winner_id')} ({pdu.get('reason')})")
-            messagebox.showinfo("Game Over", f"Game Over!\nWinner: {pdu.get('winner_id')}\nReason: {pdu.get('reason')}")
+            winner_id = pdu.get("winner_id") or pdu.get("winner", "UNKNOWN")
+            reason = pdu.get("reason", "")
+            self.log_event(f"GAME OVER: Winner {winner_id} ({reason})")
+            messagebox.showinfo("Game Over", f"Game Over!\nWinner: {winner_id}\nReason: {reason}")
         elif ptype == "ERROR":
             self.log_event(f"ERROR [{pdu.get('code')}]: {pdu.get('message')}")
             messagebox.showerror(f"Error ({pdu.get('code')})", pdu.get('message', 'Illegal Action'))
@@ -207,19 +211,40 @@ class GraphicalGameClient(tk.Tk):
         self.render_state()
 
     def _show_mulligan_dialog(self, pdu: Dict[str, Any]):
-        keep = messagebox.askyesno("Mulligan", "Do you want to KEEP your opening hand? (No = Mulligan)")
+        keep = messagebox.askyesno("Mulligan Choice", "Do you want to KEEP your opening hand? (No = Mulligan)")
+        cards_to_bottom = None
+        if keep:
+            cards_bottom_cnt = pdu.get("cards_to_bottom_count", 0)
+            if cards_bottom_cnt > 0:
+                cards_str = simpledialog.askstring("Cards to Bottom", f"Select {cards_bottom_cnt} card ID(s) to put on bottom of library (comma-separated):")
+                cards_to_bottom = [c.strip() for c in cards_str.split(",")] if cards_str else []
+
         if self.send_action_fn:
-            action = {"type": "MULLIGAN_CHOICE", "seq_num": self.client_state.last_seq_num, "keep": keep}
+            action = self.client_state.build_mulligan_choice(keep, cards_to_bottom)
             self.send_action_fn(action)
-            self.log_event(f"Sent Mulligan Choice: Keep={keep}")
+            self.log_event(f"Sent Mulligan Choice: Keep={keep}, Bottom={cards_to_bottom}")
 
     def _show_trigger_choice_dialog(self, pdu: Dict[str, Any]):
         trg_id = pdu.get("trigger_id", "")
-        accept = messagebox.askyesno("Triggered Ability", f"Optional Trigger ({trg_id}):\n{pdu.get('summary', '')}\nDo you accept?")
+        summary = pdu.get("effect_summary") or pdu.get("summary", "")
+        accept = messagebox.askyesno("Triggered Ability", f"Trigger ({trg_id}):\n{summary}\nDo you accept?")
+        chosen_target = None
+        if accept and pdu.get("requires_target"):
+            legal_targets = pdu.get("legal_targets", [])
+            chosen_target = simpledialog.askstring("Select Target", f"Legal targets: {', '.join(legal_targets)}\nEnter target:")
         if self.send_action_fn:
-            action = self.client_state.build_trigger_choice_response(trg_id, accept)
+            action = self.client_state.build_trigger_choice_response(trg_id, accept, chosen_target)
             self.send_action_fn(action)
-            self.log_event(f"Sent Trigger Choice ({trg_id}): Accept={accept}")
+            self.log_event(f"Sent Trigger Choice ({trg_id}): Accept={accept}, Target={chosen_target}")
+
+    def _show_trigger_order_dialog(self, pdu: Dict[str, Any]):
+        trg_ids = pdu.get("trigger_ids", [])
+        order_str = simpledialog.askstring("Order Triggers", f"Specify trigger order (bottom to top, comma-separated):\nTriggers: {', '.join(trg_ids)}")
+        ordered = [t.strip() for t in order_str.split(",")] if order_str else trg_ids
+        if self.send_action_fn:
+            action = self.client_state.build_trigger_order_response(ordered)
+            self.send_action_fn(action)
+            self.log_event(f"Sent Trigger Order Response: {ordered}")
 
     def _show_discard_dialog(self, pdu: Dict[str, Any]):
         count = pdu.get("count", 1)
