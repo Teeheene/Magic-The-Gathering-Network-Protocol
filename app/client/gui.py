@@ -454,9 +454,12 @@ if __name__ == "__main__":
     import threading
     from app.client.__main__ import send_framed_pdu, read_framed_pdu
 
-    host = input("Enter host [127.0.0.1]: ").strip() or "127.0.0.1"
-    port_str = input("Enter port [4444]: ").strip() or "4444"
-    port = int(port_str)
+    try:
+        host = input("Enter host [127.0.0.1]: ").strip() or "127.0.0.1"
+        port_str = input("Enter port [4444]: ").strip() or "4444"
+        port = int(port_str)
+    except Exception:
+        host, port = "127.0.0.1", 4444
 
     try:
         client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
