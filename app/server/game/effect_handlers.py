@@ -35,9 +35,9 @@ def resolve_skullcrack(item: Any, state: GameState) -> List[Dict[str, Any]]:
     changes.extend(FX.deal_damage(target, 3, item.source, state))
     return changes
 
-def resolve_counterspell(item: Any, state: GameState) -> List[Dict[str, Any]]:
+def resolve_counterspell(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
     target = item.targets[0] if item.targets else ""
-    return FX.counter_spell(target, state)
+    return FX.counter_spell(target, state, game_stack)
 
 def resolve_unsummon(item: Any, state: GameState) -> List[Dict[str, Any]]:
     target = item.targets[0] if item.targets else ""

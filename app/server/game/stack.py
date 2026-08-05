@@ -131,7 +131,15 @@ class GameStack:
             return {"result": "FIZZLE", "item": item, "pdu": resolve_pdu}
 
         if item.effect_fn:
-            state_changes = item.effect_fn(item, self.game_state, self) or []
+            import inspect
+            try:
+                sig = inspect.signature(item.effect_fn)
+                if len(sig.parameters) >= 3:
+                    state_changes = item.effect_fn(item, self.game_state, self) or []
+                else:
+                    state_changes = item.effect_fn(item, self.game_state) or []
+            except Exception:
+                state_changes = item.effect_fn(item, self.game_state) or []
 
         # Move resolved spell card to graveyard once if instant/sorcery
         if item.item_type == "SPELL" and item.source:
