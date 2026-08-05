@@ -45,7 +45,15 @@ class GraphicalGameClient(tk.Tk):
         self.selected_blockers: List[Dict[str, str]] = []
 
         self._init_ui_shell()
-        self.after(100, self._process_queue)
+        self._after_id = self.after(100, self._process_queue)
+
+    def destroy(self):
+        if hasattr(self, "_after_id") and self._after_id:
+            try:
+                self.after_cancel(self._after_id)
+            except Exception:
+                pass
+        super().destroy()
 
     def _init_ui_shell(self):
         style = ttk.Style()
@@ -157,7 +165,8 @@ class GraphicalGameClient(tk.Tk):
         while not self.queue.empty():
             pdu = self.queue.get_nowait()
             self._handle_pdu(pdu)
-        self.after(100, self._process_queue)
+        if self._after_id is not None:
+            self._after_id = self.after(100, self._process_queue)
 
     def _handle_pdu(self, pdu: Dict[str, Any]):
         self.client_state.update_authoritative_state(pdu)
