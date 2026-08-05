@@ -43,6 +43,7 @@ class MainWindow(QMainWindow):
     def _wire_signals(self):
         self.connection_view.connect_requested.connect(self.controller.connect_server)
         self.lobby_view.ready_requested.connect(self._on_ready_requested)
+        self.game_view.action_submitted.connect(self.controller.send_action)
         self.game_over_view.return_lobby_requested.connect(self._on_return_lobby)
 
         self.controller.connection_changed.connect(self._on_connection_changed)
