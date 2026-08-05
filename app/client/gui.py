@@ -30,8 +30,8 @@ class GraphicalGameClient(tk.Tk):
     def __init__(self, client_state: Optional[ClientState] = None, send_action_fn: Optional[Callable[[Dict[str, Any]], None]] = None):
         super().__init__()
         self.title("MTGNP - Magic: The Gathering Network Protocol")
-        self.geometry("1100x820")
-        self.minsize(950, 650)
+        self.geometry("1100x840")
+        self.minsize(950, 680)
         self.configure(bg=self.BG_DARK)
 
         self.client_state = client_state or ClientState()
@@ -132,6 +132,12 @@ class GraphicalGameClient(tk.Tk):
         self.activate_ability_btn = tk.Button(self.action_bar, text="Activate Ability", bg=self.ACCENT_BLUE, fg="#000000", font=("Segoe UI", 9, "bold"), command=self._on_activate_ability_click)
         self.activate_ability_btn.pack(side=tk.LEFT, padx=3)
 
+        self.attack_btn = tk.Button(self.action_bar, text="Confirm Attackers", bg=self.ACCENT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), command=self._on_confirm_attackers_click)
+        self.attack_btn.pack(side=tk.LEFT, padx=3)
+
+        self.block_btn = tk.Button(self.action_bar, text="Confirm Blockers", bg=self.ACCENT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), command=self._on_confirm_blockers_click)
+        self.block_btn.pack(side=tk.LEFT, padx=3)
+
         self.concede_btn = tk.Button(self.action_bar, text="Concede", bg=self.ACCENT_RED, fg="#ffffff", font=("Segoe UI", 9, "bold"), command=self._on_concede_click)
         self.concede_btn.pack(side=tk.RIGHT, padx=3)
 
@@ -165,6 +171,8 @@ class GraphicalGameClient(tk.Tk):
             self.log_event(f"Stack Push: {pdu.get('source')} by {pdu.get('controller')}")
         elif ptype == "STACK_RESOLVE":
             self.log_event(f"Stack Resolve: {pdu.get('stack_item_id')} -> {pdu.get('result')}")
+        elif ptype == "COMBAT_DAMAGE_RESULT":
+            self.log_event(f"Combat Damage: {len(pdu.get('damage_events', []))} events")
         elif ptype == "ERROR":
             self.log_event(f"ERROR [{pdu.get('code')}]: {pdu.get('message')}")
             messagebox.showerror(f"Error ({pdu.get('code')})", pdu.get('message', 'Illegal Action'))
@@ -224,8 +232,20 @@ class GraphicalGameClient(tk.Tk):
         for idx, item in enumerate(stk):
             self.stack_listbox.insert(tk.END, f"[{idx}] {item.get('source')} ({item.get('item_type')}) -> {item.get('targets')}")
 
-        # Priority Controls Enabling
+        # Phase Controls & Priority Enabling
         has_priority = (st.get("priority_holder") == local_p)
+        phase = st.get("phase", "")
+
+        if phase == "DECLARE_ATTACKERS" and st.get("active_player") == local_p:
+            self.attack_btn.config(state=tk.NORMAL)
+            self.block_btn.config(state=tk.DISABLED)
+        elif phase == "DECLARE_BLOCKERS" and st.get("active_player") != local_p:
+            self.attack_btn.config(state=tk.DISABLED)
+            self.block_btn.config(state=tk.NORMAL)
+        else:
+            self.attack_btn.config(state=tk.DISABLED)
+            self.block_btn.config(state=tk.DISABLED)
+
         if has_priority:
             self.pass_btn.config(state=tk.NORMAL)
             self.play_land_btn.config(state=tk.NORMAL)
@@ -280,18 +300,20 @@ class GraphicalGameClient(tk.Tk):
         name = def_obj.name if def_obj else cid
         tapped = perm.get("tapped", False)
 
+        is_attacker = cid in self.selected_attackers
         is_selected = (self.selected_permanent_id == cid)
-        bg_col = self.CARD_SELECTED_BG if is_selected else ("#2a2b3c" if not is_opponent else "#212230")
+        bg_col = self.ACCENT_RED if is_attacker else (self.CARD_SELECTED_BG if is_selected else ("#2a2b3c" if not is_opponent else "#212230"))
+        fg_col = "#000000" if is_attacker else self.TEXT_COLOR
         border_col = self.ACCENT_RED if tapped else self.ACCENT_BLUE
 
         perm_frame = tk.Frame(parent, bg=bg_col, bd=2, relief=tk.RAISED if is_selected else tk.GROOVE, padx=6, pady=4, cursor="hand2")
         perm_frame.pack(side=tk.LEFT, padx=4, pady=2)
 
-        status_str = "[TAPPED]" if tapped else "[READY]"
+        status_str = "[ATTACKING]" if is_attacker else ("[TAPPED]" if tapped else "[READY]")
         lbl_status = tk.Label(perm_frame, text=status_str, bg=bg_col, fg=border_col, font=("Segoe UI", 8, "bold"))
         lbl_status.pack(anchor=tk.W)
 
-        lbl_name = tk.Label(perm_frame, text=name, bg=bg_col, fg=self.TEXT_COLOR, font=("Segoe UI", 9, "bold"))
+        lbl_name = tk.Label(perm_frame, text=name, bg=bg_col, fg=fg_col, font=("Segoe UI", 9, "bold"))
         lbl_name.pack(anchor=tk.W)
 
         if "power" in perm:
@@ -304,6 +326,13 @@ class GraphicalGameClient(tk.Tk):
 
         def select_perm(e):
             self.selected_permanent_id = cid
+            st = self.client_state.current_state
+            # Toggle attacker selection in DECLARE_ATTACKERS
+            if st.get("phase") == "DECLARE_ATTACKERS" and not is_opponent:
+                if cid in self.selected_attackers:
+                    self.selected_attackers.remove(cid)
+                else:
+                    self.selected_attackers.append(cid)
             self.render_state()
 
         perm_frame.bind("<Button-1>", select_perm)
@@ -353,6 +382,27 @@ class GraphicalGameClient(tk.Tk):
             pdu = self.client_state.build_activate_ability(self.selected_permanent_id, 0, targets, {"tap": True})
             self.send_action_fn(pdu)
             self.log_event(f"Sent: Activate Ability on ({self.selected_permanent_id})")
+
+    def _on_confirm_attackers_click(self):
+        st = self.client_state.current_state
+        local_p = self.client_state.player_id or "player_1"
+        opp_id = self.client_state.current_state.get("active_player", "")
+        opp_target = [p for p in st.get("life_totals", {}).keys() if p != local_p]
+        target_p = opp_target[0] if opp_target else "player_2"
+
+        declarations = [{"creature_id": cid, "target": target_p} for cid in self.selected_attackers]
+        if self.send_action_fn:
+            pdu = self.client_state.build_declare_attackers(declarations)
+            self.send_action_fn(pdu)
+            self.log_event(f"Sent: Declare Attackers ({declarations})")
+            self.selected_attackers.clear()
+
+    def _on_confirm_blockers_click(self):
+        if self.send_action_fn:
+            pdu = self.client_state.build_declare_blockers(self.selected_blockers)
+            self.send_action_fn(pdu)
+            self.log_event(f"Sent: Declare Blockers ({self.selected_blockers})")
+            self.selected_blockers.clear()
 
     def _on_concede_click(self):
         if messagebox.askyesno("Concede", "Are you sure you want to concede the game?"):
