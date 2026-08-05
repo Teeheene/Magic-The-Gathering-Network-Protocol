@@ -1,9 +1,10 @@
 import unittest
-from app.client.__main__ import ClientState
+from app.client.state import ClientState
 
 class TestClientStateAndRendering(unittest.TestCase):
     def setUp(self):
         self.client_state = ClientState()
+        self.client_state.player_id = "player_1"
 
     def test_authoritative_state_replacement(self):
         pdu1 = {
@@ -13,13 +14,12 @@ class TestClientStateAndRendering(unittest.TestCase):
                 "turn": 1,
                 "phase": "PRECOMBAT_MAIN",
                 "life_totals": {"player_1": 20, "player_2": 20},
-                "hand": ["shock_001"]
+                "hand": {"player_1": ["shock_001"]}
             }
         }
         self.client_state.update_authoritative_state(pdu1)
-        self.assertEqual(self.client_state.current_state["hand"], ["shock_001"])
+        self.assertEqual(self.client_state.get_local_hand(), ["shock_001"])
 
-        # Conflicting/new update from server -> FULL REPLACEMENT!
         pdu2 = {
             "type": "GAME_STATE_UPDATE",
             "seq_num": 11,
@@ -27,20 +27,20 @@ class TestClientStateAndRendering(unittest.TestCase):
                 "turn": 1,
                 "phase": "PRECOMBAT_MAIN",
                 "life_totals": {"player_1": 18, "player_2": 20},
-                "hand": ["lightning_bolt_001"] # Shock replaced!
+                "hand": {"player_1": ["lightning_bolt_001"]}
             }
         }
         self.client_state.update_authoritative_state(pdu2)
-        self.assertEqual(self.client_state.current_state["hand"], ["lightning_bolt_001"])
-        self.assertEqual(self.client_state.last_seq_num, 11)
+        self.assertEqual(self.client_state.get_local_hand(), ["lightning_bolt_001"])
+        self.assertEqual(self.client_state.latest_state_seq_num, 11)
 
     def test_opponent_hand_remains_hidden(self):
         pdu = {
             "type": "GAME_STATE_UPDATE",
             "seq_num": 5,
             "state": {
-                "hand": ["mountain_001", "shock_001"], # Local hand visible
-                "hand_counts": {"player_2": 6}          # Opponent hand hidden
+                "hand": {"player_1": ["mountain_001", "shock_001"]},
+                "hand_counts": {"player_2": 6}
             }
         }
         self.client_state.update_authoritative_state(pdu)
@@ -48,7 +48,7 @@ class TestClientStateAndRendering(unittest.TestCase):
 
         self.assertIn("mountain_001", rendered)
         self.assertIn("'player_2': 6", rendered)
-        self.assertNotIn("counterspell_001", rendered) # Opponent card details not present
+        self.assertNotIn("counterspell_001", rendered)
 
     def test_stack_renders_bottom_to_top(self):
         pdu = {
@@ -64,8 +64,8 @@ class TestClientStateAndRendering(unittest.TestCase):
         self.client_state.update_authoritative_state(pdu)
         rendered = self.client_state.render()
 
-        self.assertIn("[0] ID: stk_01", rendered) # Bottom
-        self.assertIn("[1] ID: stk_02", rendered) # Top
+        self.assertIn("[0] ID: stk_01", rendered)
+        self.assertIn("[1] ID: stk_02", rendered)
 
     def test_error_pdu_handling_without_crash(self):
         pdu_err = {
