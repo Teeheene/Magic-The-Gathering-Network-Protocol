@@ -1,5 +1,5 @@
 import socket
-from network import server
+from app.server.network import server
 
 def main():
     serv = server.Server()

@@ -1,6 +1,6 @@
 import socket
-from game.session import GameSession
-from core.player import Player
+from app.server.game.session import GameSession
+from app.server.core.player import Player
 
 class Server:
     def __init__(self, host="0.0.0.0", port=6767, max_clients=2):
