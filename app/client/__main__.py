@@ -174,17 +174,27 @@ def send_framed_pdu(sock: socket.socket, pdu: Dict[str, Any]) -> None:
     sock.sendall(header + payload)
 
 def read_framed_pdu(sock: socket.socket) -> Optional[Dict[str, Any]]:
-    header = sock.recv(4)
-    if not header or len(header) < 4:
-        return None
-    length = struct.unpack(">I", header)[0]
-    data = bytearray()
-    while len(data) < length:
-        packet = sock.recv(length - len(data))
-        if not packet:
+    try:
+        header = sock.recv(4)
+        if not header or len(header) < 4:
             return None
-        data.extend(packet)
-    return json.loads(data.decode("utf-8"))
+        length = struct.unpack(">I", header)[0]
+        if length > 65535: # Exceeds MTGNP max length, likely unframed raw text from prototype
+            raw_text = (header + sock.recv(4096)).decode("utf-8", errors="ignore")
+            try:
+                return json.loads(raw_text)
+            except Exception:
+                return {"type": "RAW_TEXT", "message": raw_text}
+
+        data = bytearray()
+        while len(data) < length:
+            packet = sock.recv(length - len(data))
+            if not packet:
+                return None
+            data.extend(packet)
+        return json.loads(data.decode("utf-8"))
+    except Exception:
+        return None
 
 def main():
     host = input("Enter host [127.0.0.1]: ").strip() or "127.0.0.1"
