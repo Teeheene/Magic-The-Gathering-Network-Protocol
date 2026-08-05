@@ -171,13 +171,44 @@ class GraphicalGameClient(tk.Tk):
             self.log_event(f"Stack Push: {pdu.get('source')} by {pdu.get('controller')}")
         elif ptype == "STACK_RESOLVE":
             self.log_event(f"Stack Resolve: {pdu.get('stack_item_id')} -> {pdu.get('result')}")
-        elif ptype == "COMBAT_DAMAGE_RESULT":
-            self.log_event(f"Combat Damage: {len(pdu.get('damage_events', []))} events")
+        elif ptype == "MULLIGAN_PROMPT":
+            self._show_mulligan_dialog(pdu)
+        elif ptype == "TRIGGER_CHOICE":
+            self._show_trigger_choice_dialog(pdu)
+        elif ptype == "DISCARD_PROMPT":
+            self._show_discard_dialog(pdu)
+        elif ptype == "GAME_OVER":
+            self.log_event(f"GAME OVER: Winner {pdu.get('winner_id')} ({pdu.get('reason')})")
+            messagebox.showinfo("Game Over", f"Game Over!\nWinner: {pdu.get('winner_id')}\nReason: {pdu.get('reason')}")
         elif ptype == "ERROR":
             self.log_event(f"ERROR [{pdu.get('code')}]: {pdu.get('message')}")
             messagebox.showerror(f"Error ({pdu.get('code')})", pdu.get('message', 'Illegal Action'))
 
         self.render_state()
+
+    def _show_mulligan_dialog(self, pdu: Dict[str, Any]):
+        keep = messagebox.askyesno("Mulligan", "Do you want to KEEP your opening hand? (No = Mulligan)")
+        if self.send_action_fn:
+            action = {"type": "MULLIGAN_CHOICE", "seq_num": self.client_state.last_seq_num, "keep": keep}
+            self.send_action_fn(action)
+            self.log_event(f"Sent Mulligan Choice: Keep={keep}")
+
+    def _show_trigger_choice_dialog(self, pdu: Dict[str, Any]):
+        trg_id = pdu.get("trigger_id", "")
+        accept = messagebox.askyesno("Triggered Ability", f"Optional Trigger ({trg_id}):\n{pdu.get('summary', '')}\nDo you accept?")
+        if self.send_action_fn:
+            action = self.client_state.build_trigger_choice_response(trg_id, accept)
+            self.send_action_fn(action)
+            self.log_event(f"Sent Trigger Choice ({trg_id}): Accept={accept}")
+
+    def _show_discard_dialog(self, pdu: Dict[str, Any]):
+        count = pdu.get("count", 1)
+        cards_str = simpledialog.askstring("Discard Required", f"Discard {count} card ID(s) (comma-separated):")
+        to_discard = [c.strip() for c in cards_str.split(",")] if cards_str else []
+        if self.send_action_fn:
+            action = self.client_state.build_discard(to_discard)
+            self.send_action_fn(action)
+            self.log_event(f"Sent Discard: {to_discard}")
 
     def render_state(self):
         st = self.client_state.current_state
@@ -205,34 +236,29 @@ class GraphicalGameClient(tk.Tk):
             text=f"You ({local_p}): Life {lifes.get(local_p, 20)} | Library {libs.get(local_p, 0)} | GY {len(gys.get(local_p, []))}"
         )
 
-        # Render Opponent Battlefield
         for w in self.opp_battlefield_frame.winfo_children():
             w.destroy()
         opp_perms = st.get("battlefield", {}).get(opp_id, [])
         for perm in opp_perms:
             self._create_permanent_card(self.opp_battlefield_frame, perm, is_opponent=True)
 
-        # Render Local Battlefield
         for w in self.shared_battlefield_frame.winfo_children():
             w.destroy()
         local_perms = st.get("battlefield", {}).get(local_p, [])
         for perm in local_perms:
             self._create_permanent_card(self.shared_battlefield_frame, perm, is_opponent=False)
 
-        # Render Local Hand
         for w in self.hand_container.winfo_children():
             w.destroy()
         hand_cards = st.get("hand", [])
         for card_id in hand_cards:
             self._create_hand_card(self.hand_container, card_id)
 
-        # Render Stack
         self.stack_listbox.delete(0, tk.END)
         stk = st.get("stack", [])
         for idx, item in enumerate(stk):
             self.stack_listbox.insert(tk.END, f"[{idx}] {item.get('source')} ({item.get('item_type')}) -> {item.get('targets')}")
 
-        # Phase Controls & Priority Enabling
         has_priority = (st.get("priority_holder") == local_p)
         phase = st.get("phase", "")
 
@@ -327,7 +353,6 @@ class GraphicalGameClient(tk.Tk):
         def select_perm(e):
             self.selected_permanent_id = cid
             st = self.client_state.current_state
-            # Toggle attacker selection in DECLARE_ATTACKERS
             if st.get("phase") == "DECLARE_ATTACKERS" and not is_opponent:
                 if cid in self.selected_attackers:
                     self.selected_attackers.remove(cid)
@@ -386,7 +411,6 @@ class GraphicalGameClient(tk.Tk):
     def _on_confirm_attackers_click(self):
         st = self.client_state.current_state
         local_p = self.client_state.player_id or "player_1"
-        opp_id = self.client_state.current_state.get("active_player", "")
         opp_target = [p for p in st.get("life_totals", {}).keys() if p != local_p]
         target_p = opp_target[0] if opp_target else "player_2"
 
