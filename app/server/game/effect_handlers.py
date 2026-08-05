@@ -94,18 +94,9 @@ def resolve_mind_rot(item: Any, state: GameState) -> List[Dict[str, Any]]:
     return FX.discard_cards(target, to_discard, state)
 
 def resolve_gray_merchant(item: Any, state: GameState) -> List[Dict[str, Any]]:
-    devotion = 0
-    for perm in state.battlefield.get(item.controller, []):
-        cat = CardCatalog.get_instance()
-        def_obj = cat.get_definition(perm.get("id", ""))
-        if def_obj and def_obj.color == "B":
-            devotion += def_obj.mana_cost.get("B", 0)
-    devotion = max(1, devotion)
-    
-    opponent = state.get_opponent(item.controller)
-    changes = FX.lose_life(opponent, devotion, state)
-    changes.extend(FX.gain_life(item.controller, devotion, state))
-    return changes
+    perm = {"id": item.source, "tapped": False, "summoning_sick": True, "damage": 0}
+    state.battlefield[item.controller].append(perm)
+    return [{"change_type": "ENTER_BATTLEFIELD", "card_id": item.source, "controller": item.controller}]
 
 def resolve_gravedigger(item: Any, state: GameState) -> List[Dict[str, Any]]:
     target = item.targets[0] if item.targets else ""
