@@ -1,5 +1,6 @@
 import unittest
 import tkinter as tk
+import threading
 from unittest.mock import patch
 from typing import Dict, Any, List
 from app.client.gui import GraphicalGameClient
@@ -11,7 +12,7 @@ class TestGraphicalClientUI(unittest.TestCase):
         def send_fn(pdu: Dict[str, Any]):
             self.sent_pdus.append(pdu)
 
-        self.client_state = ClientState()
+        self.client_state = ClientState(player_id="player_1")
         try:
             self.app = GraphicalGameClient(client_state=self.client_state, send_action_fn=send_fn)
             if hasattr(self.app, "_after_id") and self.app._after_id:
@@ -34,6 +35,112 @@ class TestGraphicalClientUI(unittest.TestCase):
         self.assertIn("MTGNP", self.app.title())
         self.assertIsNotNone(self.app.opp_header_lbl)
         self.assertIsNotNone(self.app.local_header_lbl)
+        self.assertEqual(self.app.current_screen, "welcome")
+        self.assertEqual(self.app.welcome_frame.winfo_manager(), "pack")
+        self.assertEqual(self.app.main_container.winfo_manager(), "")
+
+    def test_begin_transitions_from_setup_to_game_screen(self):
+        self.app._add_setup_card("mountain")
+        self.app.player_id_entry.insert(0, "alice")
+
+        self.assertEqual(self.app.selected_setup_cards, ["mountain_001"])
+        self.assertEqual(self.app.setup_selection_lbl.cget("text"), "1 / 50 cards")
+
+        self.app.begin_btn.invoke()
+
+        self.assertEqual(self.app.current_screen, "game")
+        self.assertEqual(self.app.welcome_frame.winfo_manager(), "")
+        self.assertEqual(self.app.main_container.winfo_manager(), "pack")
+        self.assertIn("1-card deck", self.app.log_text.get("1.0", tk.END))
+
+    def test_preset_deck_can_be_loaded_and_edited_card_by_card(self):
+        preset_name = next(iter(self.app.preset_decks))
+        self.app.deck_preset_combo.set(preset_name)
+        self.app._on_preset_selected()
+
+        self.assertEqual(len(self.app.selected_setup_cards), 40)
+        self.assertEqual(len(self.app.selected_setup_cards), len(set(self.app.selected_setup_cards)))
+
+        self.app._add_setup_card("sol_ring")
+        self.assertEqual(len(self.app.selected_setup_cards), 41)
+        self.assertEqual(self.app.deck_preset_combo.get(), "Custom Deck")
+
+        self.app._remove_setup_card("sol_ring")
+        self.assertEqual(len(self.app.selected_setup_cards), 40)
+
+    def test_clear_deck_button_removes_all_cards(self):
+        preset_name = next(iter(self.app.preset_decks))
+        self.app.deck_preset_combo.set(preset_name)
+        self.app._on_preset_selected()
+
+        self.app.clear_deck_btn.invoke()
+
+        self.assertEqual(self.app.selected_setup_cards, [])
+        self.assertEqual(self.app.deck_cards_listbox.size(), 0)
+        self.assertEqual(self.app.setup_selection_lbl.cget("text"), "0 / 50 cards")
+        self.assertEqual(self.app.deck_preset_combo.get(), "Custom Deck")
+
+    def test_empty_deck_does_not_connect(self):
+        self.app.player_id_entry.insert(0, "alice")
+
+        self.app.begin_btn.invoke()
+
+        self.assertEqual(self.app.current_screen, "welcome")
+        self.assertIn("between 1 and 50", self.app.connection_status_lbl.cget("text"))
+
+    def test_begin_requires_connection_fields(self):
+        self.app.host_entry.delete(0, tk.END)
+        self.app.player_id_entry.delete(0, tk.END)
+
+        self.app.begin_btn.invoke()
+
+        self.assertEqual(self.app.current_screen, "welcome")
+        self.assertIn("required", self.app.connection_status_lbl.cget("text"))
+
+    def test_rejected_player_id_stays_on_welcome_screen(self):
+        calls = []
+        callback_finished = threading.Event()
+
+        def reject_duplicate(host, port, player_id, deck_list):
+            calls.append((host, port, player_id, deck_list))
+            callback_finished.set()
+            return False, f"Player ID '{player_id}' is already in use."
+
+        self.app.connect_fn = reject_duplicate
+        self.app.player_id_entry.insert(0, "Alice")
+        self.app._add_setup_card("island")
+        self.app._on_begin_click()
+        self.assertTrue(callback_finished.wait(1))
+        self.app.update()
+
+        self.assertEqual(calls, [("127.0.0.1", 4444, "Alice", ["island_001"])])
+        self.assertEqual(self.app.current_screen, "welcome")
+        self.assertIn("already in use", self.app.connection_status_lbl.cget("text"))
+
+    @patch("tkinter.messagebox.showinfo")
+    def test_game_over_returns_to_lobby_and_keeps_setup(self, mock_info):
+        disconnected = []
+        self.app.disconnect_fn = lambda: disconnected.append(True)
+        self.app._add_setup_card("mountain")
+        self.app.player_id_entry.insert(0, "alice")
+        self.app._show_game_screen()
+        self.client_state.current_state = {"turn": 3, "phase": "END_STEP"}
+
+        self.app._handle_pdu({
+            "type": "GAME_OVER",
+            "seq_num": 20,
+            "winner_id": "bob",
+            "loser_id": "alice",
+            "reason": "CONCEDE",
+        })
+
+        self.assertEqual(disconnected, [])
+        self.assertEqual(self.app.current_screen, "welcome")
+        self.assertEqual(self.app.player_id_entry.get(), "alice")
+        self.assertEqual(self.app.selected_setup_cards, ["mountain_001"])
+        self.assertEqual(self.client_state.current_state, {})
+        self.assertFalse(self.client_state.is_game_over)
+        mock_info.assert_called_once()
 
     def test_authoritative_state_rendering_in_gui(self):
         state_pdu = {

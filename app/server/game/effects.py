@@ -72,6 +72,7 @@ def draw_cards(player_id: str, count: int, game_state: GameState) -> List[Dict[s
                 "card_id": card
             })
         else:
+            game_state.decked_players.add(player_id)
             changes.append({
                 "change_type": "DRAW_FROM_EMPTY_LIBRARY",
                 "player": player_id
@@ -119,6 +120,11 @@ def destroy_permanent(permanent_id: str, game_state: GameState) -> List[Dict[str
             if perm.get("id") == permanent_id:
                 perms.pop(idx)
                 game_state.graveyards[controller].append(permanent_id)
+                attached_to = perm.get("attached_to")
+                if attached_to:
+                    target = game_state.get_permanent(attached_to)
+                    if target:
+                        target.pop("attached_pacifism", None)
                 return [{
                     "change_type": "DESTROY",
                     "target": permanent_id,

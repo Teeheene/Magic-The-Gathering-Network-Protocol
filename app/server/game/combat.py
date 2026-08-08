@@ -50,7 +50,7 @@ class CombatManager:
 
             if perm.get("summoning_sick", False):
                 def_obj = self.catalog.get_definition(cid)
-                if not def_obj or "haste" not in def_obj.keywords:
+                if not def_obj or "haste" not in (set(def_obj.keywords) | set(perm.get("keywords", []))):
                     return False, f"Creature {cid} has summoning sickness."
 
             def_obj = self.catalog.get_definition(cid)
@@ -116,9 +116,10 @@ class CombatManager:
                     return False, f"Creature {attacker_id} has flying; {blocker_id} cannot block it."
 
             if a_def and b_def:
-                if "protection_from_black" in a_def.keywords and b_def.color == "B":
+                attacker_keywords = set(a_def.keywords) | set((self.game_state.get_permanent(attacker_id) or {}).get("keywords", []))
+                if "protection_from_black" in attacker_keywords and b_def.color == "B":
                     return False, f"{attacker_id} has protection from black; {blocker_id} cannot block it."
-                if "protection_from_white" in a_def.keywords and b_def.color == "W":
+                if "protection_from_white" in attacker_keywords and b_def.color == "W":
                     return False, f"{attacker_id} has protection from white; {blocker_id} cannot block it."
 
         self.blockers = list(blocker_declarations)
@@ -179,7 +180,7 @@ class CombatManager:
             else:
                 ordered_blockers = self.damage_orders.get(aid, b_ids)
                 rem_damage = a_power
-                for bid in ordered_blockers:
+                for blocker_index, bid in enumerate(ordered_blockers):
                     if rem_damage <= 0:
                         break
                     b_perm = self.game_state.get_permanent(bid)
@@ -188,7 +189,8 @@ class CombatManager:
                         b_toughness = b_perm.get("toughness", b_def.toughness if b_def else 1)
                         b_current_damage = b_perm.get("damage", 0)
                         needed_lethal = max(1, b_toughness - b_current_damage)
-                        assigned = min(rem_damage, needed_lethal) if len(ordered_blockers) > 1 else rem_damage
+                        is_last_blocker = blocker_index == len(ordered_blockers) - 1
+                        assigned = rem_damage if is_last_blocker else min(rem_damage, needed_lethal)
                         b_perm["damage"] = b_current_damage + assigned
                         rem_damage -= assigned
                         damage_events.append({
@@ -223,7 +225,7 @@ class CombatManager:
                     "amount": b_power
                 })
 
-        seq = self.seq_num_provider.next_seq_num() if self.seq_num_provider else 0
+        seq = self.seq_num_provider.next_seq_num() if broadcast and self.seq_num_provider else 0
         pdu = {
             "type": "COMBAT_DAMAGE_RESULT",
             "seq_num": seq,

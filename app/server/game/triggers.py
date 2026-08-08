@@ -2,6 +2,7 @@ from typing import List, Dict, Any, Optional, Callable
 from app.server.game.game_state import GameState
 from app.server.game.stack import GameStack, StackItem
 from app.server.game.events import GameEvent, EventBus
+import app.server.game.effects as FX
 from app.server.interfaces import TransportInterface, SeqNumProvider
 
 def calculate_devotion_to_black(ctrl: str, state: GameState) -> int:
@@ -39,6 +40,12 @@ class TriggerManager:
         self.event_bus = event_bus
         self.pending_triggers: List[TriggeredAbility] = []
         self._next_trg_id = 1
+        self.current_request_seq_num: int = 0
+        self._group_queue: List[List[TriggeredAbility]] = []
+        self._active_group: List[TriggeredAbility] = []
+        self._waiting_choice: Optional[TriggeredAbility] = None
+        self._waiting_order: Optional[List[TriggeredAbility]] = None
+        self.on_decisions_complete: Optional[Callable[[], None]] = None
 
         if self.event_bus:
             self.event_bus.subscribe_all(self.on_event)
@@ -100,8 +107,67 @@ class TriggerManager:
                 )
                 detected.append(trg)
 
+            if card_id and "goblin_bushwhacker" in card_id:
+                ctrl = event.data.get("controller") or self.game_state.get_permanent_controller(card_id) or self.game_state.active_player
+                trg = TriggeredAbility(
+                    trigger_id=self.generate_trigger_id(), source_id=card_id, controller=ctrl,
+                    effect_summary="Creatures you control get +1/+0 and gain haste until end of turn.",
+                    effect_fn=lambda item, state, stack=None: self._bushwhacker_effect(ctrl, state),
+                )
+                detected.append(trg)
+
+            if card_id and "gravedigger" in card_id:
+                ctrl = event.data.get("controller") or self.game_state.get_permanent_controller(card_id) or self.game_state.active_player
+                legal_targets = [
+                    grave_card for grave_card in self.game_state.graveyards.get(ctrl, [])
+                    if (self._card_definition(grave_card) and self._card_definition(grave_card).is_creature())
+                ]
+                if legal_targets:
+                    detected.append(TriggeredAbility(
+                        trigger_id=self.generate_trigger_id(), source_id=card_id, controller=ctrl,
+                        effect_summary="Return target creature card from your graveyard to your hand.",
+                        requires_target=True, legal_targets=legal_targets,
+                        effect_fn=lambda item, state, stack=None, owner=ctrl: FX.return_from_graveyard(item.targets[0], owner, state),
+                    ))
+
+        if event.event_type == "spell_cast":
+            ctrl = event.data.get("controller", "")
+            cast_definition = None
+            try:
+                from app.shared.cards import CardCatalog
+                cast_definition = CardCatalog.get_instance().get_definition(event.data.get("card_id", ""))
+            except Exception:
+                pass
+            if cast_definition and not cast_definition.is_creature():
+                for permanent in list(self.game_state.battlefield.get(ctrl, [])):
+                    source_id = permanent.get("id", "")
+                    if "monastery_swiftspear" in source_id:
+                        detected.append(TriggeredAbility(
+                            trigger_id=self.generate_trigger_id(), source_id=source_id, controller=ctrl,
+                            effect_summary="Prowess: this creature gets +1/+1 until end of turn.",
+                            effect_fn=lambda item, state, stack=None, sid=source_id: FX.modify_power_toughness(sid, 1, 1, "end_of_turn", state),
+                        ))
+
         self.pending_triggers.extend(detected)
         return detected
+
+    @staticmethod
+    def _card_definition(card_id: str):
+        try:
+            from app.shared.cards import CardCatalog
+            return CardCatalog.get_instance().get_definition(card_id)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _bushwhacker_effect(controller: str, state: GameState) -> List[Dict[str, Any]]:
+        changes: List[Dict[str, Any]] = []
+        for permanent in list(state.battlefield.get(controller, [])):
+            if "power" not in permanent:
+                continue
+            changes.extend(FX.modify_power_toughness(permanent.get("id", ""), 1, 0, "end_of_turn", state))
+            changes.extend(FX.grant_keyword(permanent.get("id", ""), "haste", "end_of_turn", state))
+        return changes
 
     def _goblin_guide_effect(self, opp: str, state: GameState) -> List[Dict[str, Any]]:
         lib = state.libraries.get(opp, [])
@@ -133,28 +199,63 @@ class TriggerManager:
             {"change_type": "LIFE_GAIN", "target": ctrl, "amount": devotion}
         ]
 
-    def place_pending_triggers_on_stack(self, ap: str, nap: str) -> None:
-        if not self.pending_triggers:
+    def place_pending_triggers_on_stack(self, ap: str, nap: str) -> bool:
+        """Begin AP/NAP ordering and choice processing.
+
+        Returns true only when no mandatory player decision remains.
+        """
+        if self._waiting_choice or self._waiting_order:
+            return False
+        if self.pending_triggers:
+            ap_triggers = [t for t in self.pending_triggers if t.controller == ap]
+            nap_triggers = [t for t in self.pending_triggers if t.controller == nap]
+            self.pending_triggers.clear()
+            self._group_queue.extend(group for group in (ap_triggers, nap_triggers) if group)
+        self._process_next_group()
+        return not (self._waiting_choice or self._waiting_order or self._group_queue or self._active_group)
+
+    def _process_next_group(self) -> None:
+        if not self._active_group:
+            if not self._group_queue:
+                return
+            self._active_group = self._group_queue.pop(0)
+
+        decision_trigger = next(
+            (trigger for trigger in self._active_group if trigger.optional or trigger.requires_target),
+            None,
+        )
+        if decision_trigger:
+            self._waiting_choice = decision_trigger
+            self.current_request_seq_num = self.seq_num_provider.next_seq_num() if self.seq_num_provider else self.current_request_seq_num + 1
+            if self.transport:
+                self.transport.send_to_player(decision_trigger.controller, {
+                    "type": "TRIGGER_CHOICE",
+                    "seq_num": self.current_request_seq_num,
+                    "trigger_id": decision_trigger.trigger_id,
+                    "source_id": decision_trigger.source_id,
+                    "effect_summary": decision_trigger.effect_summary,
+                    "requires_target": decision_trigger.requires_target,
+                    "legal_targets": list(decision_trigger.legal_targets),
+                })
             return
 
-        ap_triggers = [t for t in self.pending_triggers if t.controller == ap]
-        nap_triggers = [t for t in self.pending_triggers if t.controller == nap]
-        
-        self.pending_triggers.clear()
+        if len(self._active_group) >= 2:
+            self._waiting_order = list(self._active_group)
+            self.current_request_seq_num = self.seq_num_provider.next_seq_num() if self.seq_num_provider else self.current_request_seq_num + 1
+            if self.transport:
+                self.transport.send_to_player(self._active_group[0].controller, {
+                    "type": "TRIGGER_ORDER",
+                    "seq_num": self.current_request_seq_num,
+                    "player_id": self._active_group[0].controller,
+                    "trigger_ids": [trigger.trigger_id for trigger in self._active_group],
+                })
+            return
 
-        # AP triggers placed first (bottom of stack)
-        for trg in ap_triggers:
-            if not trg.optional and not trg.requires_target:
-                self._push_trigger_to_stack(trg)
-            else:
-                self.pending_triggers.append(trg)
-
-        # NAP triggers placed second (top of stack, resolves first)
-        for trg in nap_triggers:
-            if not trg.optional and not trg.requires_target:
-                self._push_trigger_to_stack(trg)
-            else:
-                self.pending_triggers.append(trg)
+        if self._active_group:
+            trigger = self._active_group[0]
+            self._push_trigger_to_stack(trigger, getattr(trigger, "chosen_target", None))
+        self._active_group = []
+        self._process_next_group()
 
     def _push_trigger_to_stack(self, trg: TriggeredAbility, chosen_target: Optional[str] = None) -> None:
         stk_id = self.stack.generate_stack_item_id()
@@ -170,27 +271,48 @@ class TriggerManager:
         self.stack.push(item)
 
     def handle_trigger_order_response(self, player_id: str, ordered_trigger_ids: List[str]) -> bool:
-        player_pending = [t for t in self.pending_triggers if t.controller == player_id]
+        player_pending = self._waiting_order or []
         expected_ids = {t.trigger_id for t in player_pending}
-        if set(ordered_trigger_ids) != expected_ids or len(ordered_trigger_ids) != len(player_pending):
+        if not player_pending or player_pending[0].controller != player_id or set(ordered_trigger_ids) != expected_ids or len(ordered_trigger_ids) != len(player_pending):
             return False
         
         trg_map = {t.trigger_id: t for t in player_pending}
         for tid in ordered_trigger_ids:
             trg = trg_map[tid]
-            self._push_trigger_to_stack(trg)
-            self.pending_triggers.remove(trg)
+            self._push_trigger_to_stack(trg, getattr(trg, "chosen_target", None))
+        self._waiting_order = None
+        self._active_group = []
+        self._process_next_group()
+        self._notify_if_complete()
         return True
 
     def handle_trigger_choice_response(self, player_id: str, trigger_id: str, accept: bool, chosen_target: Optional[str] = None) -> bool:
-        trg = next((t for t in self.pending_triggers if t.trigger_id == trigger_id and t.controller == player_id), None)
+        trg = self._waiting_choice
+        if trg and (trg.trigger_id != trigger_id or trg.controller != player_id):
+            trg = None
         if not trg:
             return False
-        
-        self.pending_triggers.remove(trg)
+
         if accept:
             if trg.requires_target:
                 if not chosen_target or chosen_target not in trg.legal_targets:
                     return False
-            self._push_trigger_to_stack(trg, chosen_target)
+            # The choice has been made; retain the trigger for ordering with
+            # any other simultaneous triggers from the same controller.
+            trg.optional = False
+            trg.requires_target = False
+            if chosen_target:
+                original_effect = trg.effect_fn
+                trg.effect_fn = original_effect
+                setattr(trg, "chosen_target", chosen_target)
+        else:
+            self._active_group.remove(trg)
+        self._waiting_choice = None
+        self._process_next_group()
+        self._notify_if_complete()
         return True
+
+    def _notify_if_complete(self) -> None:
+        if not (self._waiting_choice or self._waiting_order or self._group_queue or self._active_group):
+            if self.on_decisions_complete:
+                self.on_decisions_complete()

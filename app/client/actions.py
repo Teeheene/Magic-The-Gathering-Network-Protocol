@@ -2,6 +2,10 @@ from typing import Dict, Any, Optional, List
 
 class ClientActionFactory:
     @staticmethod
+    def ping(seq_num: int, timestamp: int) -> Dict[str, Any]:
+        return {"type": "PING", "seq_num": seq_num, "timestamp": timestamp}
+
+    @staticmethod
     def player_ready(seq_num: int, player_id: str, deck_list: List[str]) -> Dict[str, Any]:
         return {
             "type": "PLAYER_READY",
@@ -73,14 +77,13 @@ class ClientActionFactory:
 
     @staticmethod
     def mulligan_choice(seq_num: int, keep: bool, cards_to_bottom: Optional[List[str]] = None) -> Dict[str, Any]:
-        pdu: Dict[str, Any] = {
+        return {
             "type": "MULLIGAN_CHOICE",
             "seq_num": seq_num,
-            "keep": keep
+            "keep": keep,
+            # The field is required by MTGNP even when no cards are selected.
+            "cards_to_bottom": list(cards_to_bottom or []),
         }
-        if cards_to_bottom is not None:
-            pdu["cards_to_bottom"] = cards_to_bottom
-        return pdu
 
     @staticmethod
     def trigger_choice_response(seq_num: int, trigger_id: str, accept: bool, chosen_target: Optional[str] = None) -> Dict[str, Any]:

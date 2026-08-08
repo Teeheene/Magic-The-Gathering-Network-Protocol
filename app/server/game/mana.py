@@ -65,6 +65,7 @@ class ManaPayment:
 
         # Check available sources in game state
         sources = cls.find_available_mana_sources(player_id, game_state)
+        pool = game_state.mana_pools.get(player_id, {})
         needed = dict(colored_reqs)
         needed_generic = generic_req
 
@@ -72,6 +73,7 @@ class ManaPayment:
         
         # Satisfy colored first
         for color, count in list(needed.items()):
+            count = max(0, count - pool.get(color, 0))
             while count > 0:
                 found = False
                 for src in sources:
@@ -86,7 +88,9 @@ class ManaPayment:
 
         # Satisfy generic from remaining sources
         remaining_sources = [s for s in sources if s["id"] not in [u["id"] for u in used_sources]]
-        available_generic_capacity = sum(s["amount"] for s in remaining_sources)
+        colored_pool_used = sum(min(colored_reqs.get(color, 0), pool.get(color, 0)) for color in colored_reqs)
+        available_pool_capacity = max(0, sum(pool.values()) - colored_pool_used)
+        available_generic_capacity = available_pool_capacity + sum(s["amount"] for s in remaining_sources)
 
         if available_generic_capacity < needed_generic:
             return False, f"Not enough untapped sources for generic mana cost {generic_req}."
@@ -101,12 +105,16 @@ class ManaPayment:
 
         colored_reqs, generic_req = cls.calculate_cost_requirements(mana_cost)
         sources = cls.find_available_mana_sources(player_id, game_state)
+        pool = game_state.mana_pools.get(player_id, {})
 
         tapped_ids: List[str] = []
         needed = dict(colored_reqs)
 
         # Tap for colored
         for color, count in list(needed.items()):
+            from_pool = min(count, pool.get(color, 0))
+            pool[color] = pool.get(color, 0) - from_pool
+            count -= from_pool
             while count > 0:
                 for src in sources:
                     if src["id"] not in tapped_ids and src["produces"] == color:
@@ -117,6 +125,12 @@ class ManaPayment:
 
         # Tap for generic
         rem_generic = generic_req
+        for color in ("C", "W", "U", "B", "R", "G"):
+            if rem_generic <= 0:
+                break
+            spent = min(rem_generic, pool.get(color, 0))
+            pool[color] = pool.get(color, 0) - spent
+            rem_generic -= spent
         for src in sources:
             if rem_generic <= 0:
                 break

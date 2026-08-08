@@ -1,6 +1,7 @@
 import socket
 import json
 import struct
+import threading
 from typing import Dict, Any, Optional
 
 def recv_exact(sock: socket.socket, length: int) -> Optional[bytes]:
@@ -21,6 +22,7 @@ class ClientTransport:
     def __init__(self, verbose: bool = False):
         self.sock: Optional[socket.socket] = None
         self.verbose = verbose
+        self._send_lock = threading.Lock()
 
     def connect(self, host: str, port: int) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -41,7 +43,8 @@ class ClientTransport:
         if len(payload) > self.MAX_PAYLOAD_SIZE:
             raise ValueError(f"Outbound payload length {len(payload)} exceeds maximum allowed ({self.MAX_PAYLOAD_SIZE}).")
         header = struct.pack(">I", len(payload))
-        self.sock.sendall(header + payload)
+        with self._send_lock:
+            self.sock.sendall(header + payload)
         if self.verbose:
             print("[CLIENT SENT PDU]")
             print(json.dumps(pdu, indent=2))
@@ -61,6 +64,10 @@ class ClientTransport:
             return None
 
         pdu = json.loads(data_bytes.decode("utf-8"))
+        if not isinstance(pdu, dict):
+            raise ValueError("Inbound PDU must be a JSON object.")
+        if not isinstance(pdu.get("type"), str) or not isinstance(pdu.get("seq_num"), int):
+            raise ValueError("Inbound PDU requires type and seq_num fields.")
         if self.verbose:
             print("[CLIENT RECEIVED PDU]")
             print(json.dumps(pdu, indent=2))

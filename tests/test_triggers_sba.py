@@ -3,7 +3,7 @@ from typing import Dict, List, Any
 from app.server.game.game_state import GameState
 from app.server.game.stack import GameStack
 from app.server.game.events import GameEvent
-from app.server.game.triggers import TriggerManager
+from app.server.game.triggers import TriggerManager, TriggeredAbility
 from app.server.game.sba import StateBasedActions
 from tests.test_priority_stack import MockTransport, MockSeqNumProvider
 
@@ -43,6 +43,32 @@ class TestTriggersAndSBA(unittest.TestCase):
         self.assertEqual(len(self.state.stack), 2)
         self.assertEqual(self.state.stack[0]["controller"], "player_1") # Bottom (resolves last)
         self.assertEqual(self.state.stack[1]["controller"], "player_2") # Top (resolves first)
+
+    def test_same_controller_must_answer_trigger_order_request(self):
+        for source in ("gray_merchant_001", "gray_merchant_002"):
+            self.trigger_mgr.detect_triggers_for_event(GameEvent(
+                "permanent_entered", {"card_id": source, "controller": "player_1"}
+            ))
+        ready = self.trigger_mgr.place_pending_triggers_on_stack("player_1", "player_2")
+        self.assertFalse(ready)
+        request_player, request = self.transport.sent_messages[-1]
+        self.assertEqual(request_player, "player_1")
+        self.assertEqual(request["type"], "TRIGGER_ORDER")
+        self.assertEqual(self.state.stack, [])
+
+        self.assertTrue(self.trigger_mgr.handle_trigger_order_response("player_1", list(reversed(request["trigger_ids"]))))
+        self.assertEqual([item["source"] for item in self.state.stack], ["gray_merchant_002", "gray_merchant_001"])
+
+    def test_optional_trigger_choice_can_decline(self):
+        trigger = TriggeredAbility(
+            "trg_optional", "gray_merchant_001", "player_1", "You may gain life.", optional=True,
+        )
+        self.trigger_mgr.pending_triggers.append(trigger)
+        self.assertFalse(self.trigger_mgr.place_pending_triggers_on_stack("player_1", "player_2"))
+        _, request = self.transport.sent_messages[-1]
+        self.assertEqual(request["type"], "TRIGGER_CHOICE")
+        self.assertTrue(self.trigger_mgr.handle_trigger_choice_response("player_1", "trg_optional", False))
+        self.assertEqual(self.state.stack, [])
 
     def test_sba_zero_toughness_creature_dies(self):
         self.state.battlefield["player_1"] = [

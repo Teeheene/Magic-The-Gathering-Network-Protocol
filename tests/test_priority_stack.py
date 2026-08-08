@@ -71,10 +71,12 @@ class TestPriorityAndStack(unittest.TestCase):
     def test_open_priority_window_grants_ap(self):
         self.priority_mgr.open_priority_window()
         self.assertEqual(self.state.priority_holder, "player_1")
+        self.assertEqual(self.transport.broadcast_messages, [])
         self.assertEqual(len(self.transport.sent_messages), 1)
-        p_id, pdu = self.transport.sent_messages[0]
-        self.assertEqual(p_id, "player_1")
+        recipient, pdu = self.transport.sent_messages[0]
+        self.assertEqual(recipient, "player_1")
         self.assertEqual(pdu["type"], "PRIORITY_GRANT")
+        self.assertEqual(pdu["player_id"], "player_1")
 
     def test_priority_pass_transfers_to_nap(self):
         self.priority_mgr.open_priority_window()

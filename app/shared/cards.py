@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 class CardDefinition:
     def __init__(self, base_id: str, data: Dict[str, Any]):
@@ -109,4 +109,27 @@ class CardCatalog:
         return self.definitions.get(base_id)
 
     def is_legal_card(self, card_id: str) -> bool:
-        return self.get_definition(card_id) is not None
+        if not isinstance(card_id, str):
+            return False
+        match = re.fullmatch(r"(.+)_(\d{3})", card_id)
+        if not match:
+            return False
+        definition = self.definitions.get(match.group(1))
+        return bool(definition and 1 <= int(match.group(2)) <= definition.copies)
+
+
+def validate_deck(deck_list: List[str]) -> Tuple[bool, str]:
+    if not isinstance(deck_list, list):
+        return False, "Deck must be a list of card IDs."
+    if not 1 <= len(deck_list) <= 50:
+        return False, f"Deck has {len(deck_list)} cards; it must contain between 1 and 50."
+    if not all(isinstance(card_id, str) and card_id.strip() for card_id in deck_list):
+        return False, "Every deck entry must be a non-empty card ID."
+    if len(set(deck_list)) != len(deck_list):
+        return False, "Duplicate card instance IDs found in deck list."
+
+    catalog = CardCatalog.get_instance()
+    for card_id in deck_list:
+        if not catalog.is_legal_card(card_id):
+            return False, f"Card ID '{card_id}' is not recognized in the card catalog."
+    return True, "Deck is valid."

@@ -43,6 +43,18 @@ class TestCardsManaEffects(unittest.TestCase):
         self.assertEqual(res["status"], "ERROR")
         self.assertEqual(res["code"], "ILLEGAL_ACTION")
 
+    def test_land_cannot_be_cast_as_a_spell(self):
+        self.state.hands["player_1"] = ["mountain_001"]
+        self.priority_mgr.open_priority_window()
+
+        res = self.gameplay.cast_spell("player_1", "mountain_001", [], {})
+
+        self.assertEqual(res["status"], "ERROR")
+        self.assertEqual(res["code"], "ILLEGAL_ACTION")
+        self.assertIn("cannot be cast", res["message"])
+        self.assertIn("mountain_001", self.state.hands["player_1"])
+        self.assertTrue(self.stack.is_empty())
+
     def test_cast_spell_insufficient_mana_atomic_rollback(self):
         self.state.hands["player_1"] = ["lightning_bolt_001"]
         self.state.battlefield["player_1"] = [{"id": "mountain_001", "tapped": True}]

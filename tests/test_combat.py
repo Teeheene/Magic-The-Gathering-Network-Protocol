@@ -121,5 +121,23 @@ class TestCombatSystem(unittest.TestCase):
         fs_sources = [d["source"] for d in pdu_reg["damage_events"]]
         self.assertNotIn("white_knight_001", fs_sources)
 
+    def test_last_blocker_receives_all_remaining_damage(self):
+        self.state.battlefield["player_1"] = [
+            {"id": "reckless_wurm_001", "power": 4, "toughness": 4, "tapped": False, "summoning_sick": False}
+        ]
+        self.state.battlefield["player_2"] = [
+            {"id": "savannah_lions_001", "power": 2, "toughness": 1, "damage": 0, "tapped": False},
+            {"id": "grizzly_bears_001", "power": 2, "toughness": 2, "damage": 0, "tapped": False},
+        ]
+        self.combat.validate_and_declare_attackers("player_1", [{"creature_id": "reckless_wurm_001", "target": "player_2"}])
+        self.combat.validate_and_declare_blockers("player_2", [
+            {"creature_id": "savannah_lions_001", "blocking_id": "reckless_wurm_001"},
+            {"creature_id": "grizzly_bears_001", "blocking_id": "reckless_wurm_001"},
+        ])
+        self.combat.set_damage_order("reckless_wurm_001", ["savannah_lions_001", "grizzly_bears_001"])
+        self.combat.resolve_combat_damage()
+        self.assertEqual(self.state.get_permanent("savannah_lions_001")["damage"], 1)
+        self.assertEqual(self.state.get_permanent("grizzly_bears_001")["damage"], 3)
+
 if __name__ == "__main__":
     unittest.main()

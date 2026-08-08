@@ -37,6 +37,15 @@ class TestCoreContracts(unittest.TestCase):
         self.assertEqual(blk["type"], "DECLARE_BLOCKERS")
         self.assertIn("blockers", blk)
 
+        self.assertEqual(
+            ClientActionFactory.mulligan_choice(32, True),
+            {"type": "MULLIGAN_CHOICE", "seq_num": 32, "keep": True, "cards_to_bottom": []},
+        )
+        self.assertEqual(
+            ClientActionFactory.mulligan_choice(33, False),
+            {"type": "MULLIGAN_CHOICE", "seq_num": 33, "keep": False, "cards_to_bottom": []},
+        )
+
         conc = ClientActionFactory.concede(50, "player_1")
         self.assertEqual(conc, {"type": "CONCEDE", "seq_num": 50, "player_id": "player_1"})
 

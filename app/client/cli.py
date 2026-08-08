@@ -1,5 +1,5 @@
 import threading
-import sys
+import time
 from typing import Dict, Any, Optional
 from app.client.state import ClientState
 from app.client.transport import ClientTransport
@@ -15,12 +15,12 @@ def render_cli(state_dict: Dict[str, Any], local_pid: Optional[str]) -> None:
     hand_counts = state_dict.get("hand_counts", {})
     gy_dict = state_dict.get("graveyard", {})
 
-    players = list(set(list(life_totals.keys()) + list(lib_counts.keys())))
-    if not players:
-        players = ["player_1", "player_2"]
+    players = list(dict.fromkeys(list(life_totals.keys()) + list(lib_counts.keys())))
+    if local_pid and local_pid not in players:
+        players.insert(0, local_pid)
     
-    opp_pid = next((p for p in players if p != local_pid), "player_2")
-    my_pid = local_pid or "player_1"
+    opp_pid = next((p for p in players if p != local_pid), "opponent")
+    my_pid = local_pid or "you"
 
     print(f"OPPONENT [{opp_pid}]: Life: {life_totals.get(opp_pid, 20)} | Library: {lib_counts.get(opp_pid, 0)} | Hand: {hand_counts.get(opp_pid, 0)} | GY: {len(gy_dict.get(opp_pid, []))}")
     
@@ -66,15 +66,25 @@ def render_cli(state_dict: Dict[str, Any], local_pid: Optional[str]) -> None:
     print(f"  Hand ({len(my_hand)}): {', '.join(my_hand) if my_hand else '(empty)'}")
     print("=" * 60 + "\n")
 
+def player_setup():
+    player_id = input("Enter Player ID: ").strip()
+    print("Build your deck: ")
+
 def run_cli(host: str = "127.0.0.1", port: int = 4444, verbose: bool = False, player_id: Optional[str] = None):
+    player_id = (player_id or input("Enter Player ID: ")).strip()
+    if not player_id:
+        print("Player ID cannot be empty.")
+        return
     t_obj = ClientTransport(verbose=verbose)
     state = ClientState(player_id=player_id)
     
     print(f"Connecting to MTGNP server at {host}:{port}...")
     try:
         t_obj.connect(host, port)
+        t_obj.send_pdu(state.build_player_ready())
     except Exception as e:
         print(f"Failed to connect: {e}")
+        t_obj.close()
         return
 
     def network_thread():
@@ -85,19 +95,24 @@ def run_cli(host: str = "127.0.0.1", port: int = 4444, verbose: bool = False, pl
                 break
             state.update_authoritative_state(pdu)
             ptype = pdu.get("type")
-            if ptype == "MATCH_START":
-                print(f"Match Started! Assigned Player ID: {state.player_id}")
-            elif ptype == "GAME_STATE_UPDATE":
-                render_cli(state.current_state, state.player_id)
+            if ptype == "GAME_STATE_UPDATE":
+                if state.current_state.get("phase") == "LOBBY":
+                    print(f"Lobby: {state.current_state.get('players_ready', 0)}/2 ready")
+                else:
+                    render_cli(state.current_state, state.player_id)
+            elif ptype == "PRIORITY_GRANT":
+                print(f"Priority: {pdu.get('player_id')}")
+            elif ptype == "PHASE_TRANSITION":
+                print(f"Phase: {pdu.get('to_phase')}")
             elif ptype == "ERROR":
-                print(f"[SERVER ERROR]: {pdu.get('message')}")
+                print(f"[SERVER ERROR {pdu.get('code')}]: {pdu.get('message')}")
             elif ptype == "GAME_OVER":
-                print(f"[GAME OVER]: Winner: {pdu.get('winner')}")
+                print(f"[GAME OVER]: Winner: {pdu.get('winner_id')} ({pdu.get('reason')})")
 
     th = threading.Thread(target=network_thread, daemon=True)
     th.start()
 
-    print("CLI Client Ready. Type commands or 'pass', 'land <id>', 'quit':")
+    print("Commands: pass, land ID, cast ID [TARGET], keep [BOTTOM...], mulligan, discard IDs..., concede, ready, quit")
     while True:
         try:
             cmd = input("> ").strip()
@@ -108,8 +123,30 @@ def run_cli(host: str = "127.0.0.1", port: int = 4444, verbose: bool = False, pl
             elif cmd.startswith("land "):
                 cid = cmd.split(" ", 1)[1]
                 t_obj.send_pdu(state.build_play_land(cid))
+            elif cmd.startswith("cast "):
+                parts = cmd.split()
+                card_id = parts[1]
+                targets = parts[2:3]
+                from app.shared.cards import CardCatalog
+                definition = CardCatalog.get_instance().get_definition(card_id)
+                payment = {
+                    ("X" if color == "Generic" else color): amount
+                    for color, amount in definition.mana_cost.items() if amount
+                } if definition else {}
+                t_obj.send_pdu(state.build_cast_spell(card_id, targets, payment))
+            elif cmd == "mulligan":
+                t_obj.send_pdu(state.build_mulligan_choice(False, []))
+            elif cmd == "keep" or cmd.startswith("keep "):
+                t_obj.send_pdu(state.build_mulligan_choice(True, cmd.split()[1:]))
+            elif cmd.startswith("discard "):
+                t_obj.send_pdu(state.build_discard(cmd.split()[1:]))
+            elif cmd == "concede":
+                t_obj.send_pdu(state.build_concede())
             elif cmd == "ready":
+                state.reset_for_lobby()
                 t_obj.send_pdu(state.build_player_ready())
+            elif cmd == "ping":
+                t_obj.send_pdu(state.build_ping(int(time.time() * 1000)))
         except (KeyboardInterrupt, EOFError):
             break
     t_obj.close()

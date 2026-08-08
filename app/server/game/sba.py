@@ -11,6 +11,15 @@ class StateBasedActions:
 
         while True:
             changes_this_pass: List[Dict[str, Any]] = []
+
+            if game_state.decked_players:
+                loser = game_state.active_player if game_state.active_player in game_state.decked_players else next(iter(game_state.decked_players))
+                game_over_result = {
+                    "winner_id": game_state.get_opponent(loser),
+                    "loser_id": loser,
+                    "reason": "DECK_EMPTY",
+                }
+                break
             
             # 1. Check zero or less life
             p1 = game_state.players[0] if len(game_state.players) > 0 else ""

@@ -1,4 +1,5 @@
 from typing import Dict, List, Any, Optional, Set
+import app.shared.cards
 import copy
 
 class GameState:
@@ -20,6 +21,10 @@ class GameState:
         self.damage_prevention_shields: Dict[str, int] = {}
         self.cant_gain_life: bool = False
         self.cant_prevent_damage: bool = False
+        self.decked_players: Set[str] = set()
+        self.mana_pools: Dict[str, Dict[str, int]] = {
+            p: {color: 0 for color in ("W", "U", "B", "R", "G", "C")} for p in players
+        }
 
     def get_opponent(self, player_id: str) -> str:
         for p in self.players:
@@ -55,5 +60,6 @@ class GameState:
             "hand_counts": {p: len(cards) for p, cards in self.hands.items() if p != viewing_player},
             "library_counts": {p: len(cards) for p, cards in self.libraries.items()},
             "land_played_this_turn": self.land_played_this_turn,
+            "mana_pools": copy.deepcopy(self.mana_pools),
         }
         return state_dict

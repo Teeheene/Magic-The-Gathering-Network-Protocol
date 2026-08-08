@@ -1,5 +1,6 @@
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List
 from app.client.actions import ClientActionFactory
+from app.shared.cards import validate_deck
 
 def build_default_development_deck() -> List[str]:
     deck: List[str] = []
@@ -17,23 +18,6 @@ def build_default_development_deck() -> List[str]:
         deck.append(f"incinerate_{i:03d}")
     return deck
 
-def validate_deck(deck_list: List[str]) -> Tuple[bool, str]:
-    if not (1 <= len(deck_list) <= 50):
-        return False, f"Deck length {len(deck_list)} is invalid. Must be between 1 and 50."
-    if len(set(deck_list)) != len(deck_list):
-        return False, "Duplicate card instance IDs found in deck list."
-    
-    try:
-        from app.shared.cards import CardCatalog
-        cat = CardCatalog.get_instance()
-        for cid in deck_list:
-            def_obj = cat.get_definition(cid)
-            if not def_obj:
-                return False, f"Invalid card instance ID '{cid}' not recognized in catalog."
-    except Exception:
-        pass
-    return True, "Deck is valid."
-
 class ClientState:
     def __init__(self, player_id: Optional[str] = None):
         self.player_id: Optional[str] = player_id
@@ -48,6 +32,22 @@ class ClientState:
         self.last_error: Optional[Dict[str, Any]] = None
         self.is_game_over: bool = False
         self.game_over_info: Optional[Dict[str, Any]] = None
+        self.pending_request: Optional[Dict[str, Any]] = None
+        self.ready_seq_num: int = 0
+        self.ping_seq_num: int = 0
+
+    def reset_for_lobby(self) -> None:
+        """Clear match-specific state while keeping the chosen player ID."""
+        self.current_state = {}
+        self.latest_server_seq_num = 0
+        self.latest_state_seq_num = 0
+        self.priority_seq_num = None
+        self.phase_seq_num = None
+        self.trigger_seq_num = None
+        self.last_error = None
+        self.is_game_over = False
+        self.game_over_info = None
+        self.pending_request = None
 
     @property
     def last_seq_num(self) -> int:
@@ -69,11 +69,25 @@ class ClientState:
             self.latest_state_seq_num = pdu.get("seq_num", self.latest_state_seq_num)
             self.current_state = pdu.get("state", {})
         elif ptype == "PRIORITY_GRANT":
-            self.priority_seq_num = pdu.get("seq_num", self.priority_seq_num)
+            priority_holder = pdu.get("player_id")
+            if priority_holder:
+                self.current_state["priority_holder"] = priority_holder
+
+            # All clients receive the grant so their displays stay in sync,
+            # but only the named holder should retain an actionable sequence.
+            if not priority_holder or not self.player_id or priority_holder == self.player_id:
+                self.priority_seq_num = pdu.get("seq_num", self.priority_seq_num)
+            else:
+                self.priority_seq_num = None
         elif ptype == "PHASE_TRANSITION":
             self.phase_seq_num = pdu.get("seq_num", self.phase_seq_num)
+            self.current_state["phase"] = pdu.get("to_phase", self.current_state.get("phase"))
+            self.current_state["active_player"] = pdu.get("active_player", self.current_state.get("active_player"))
+            self.current_state["turn"] = pdu.get("turn", self.current_state.get("turn"))
+            self.current_state["priority_holder"] = None
         elif ptype in ("TRIGGER_ORDER", "TRIGGER_CHOICE"):
             self.trigger_seq_num = pdu.get("seq_num", self.trigger_seq_num)
+            self.pending_request = dict(pdu)
         elif ptype == "ERROR":
             self.last_error = pdu
         elif ptype == "GAME_OVER":
@@ -116,9 +130,14 @@ class ClientState:
         return preferred if preferred is not None else self.latest_server_seq_num
 
     def build_player_ready(self, deck_list: Optional[List[str]] = None) -> Dict[str, Any]:
-        pid = self.player_id or "player_1"
+        pid = self.player_id
         dl = deck_list if deck_list is not None else build_default_development_deck()
-        return ClientActionFactory.player_ready(self.latest_server_seq_num, pid, dl)
+        self.ready_seq_num += 1
+        return ClientActionFactory.player_ready(self.ready_seq_num, pid or "", dl)
+
+    def build_ping(self, timestamp: int) -> Dict[str, Any]:
+        self.ping_seq_num += 1
+        return ClientActionFactory.ping(self.ping_seq_num, timestamp)
 
     def build_priority_pass(self) -> Dict[str, Any]:
         return ClientActionFactory.priority_pass(self._get_seq(self.priority_seq_num))

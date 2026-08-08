@@ -50,6 +50,10 @@ def resolve_giant_growth(item: Any, state: GameState, game_stack: Optional[Any] 
     target = item.targets[0] if item.targets else ""
     return FX.modify_power_toughness(target, 3, 3, "end_of_turn", state)
 
+def resolve_vines_of_vastwood(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
+    target = item.targets[0] if item.targets else ""
+    return FX.modify_power_toughness(target, 4, 4, "end_of_turn", state)
+
 def resolve_naturalize(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
     target = item.targets[0] if item.targets else ""
     return FX.destroy_permanent(target, state)
@@ -97,8 +101,7 @@ def resolve_gray_merchant(item: Any, state: GameState, game_stack: Optional[Any]
     return []
 
 def resolve_gravedigger(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
-    target = item.targets[0] if item.targets else ""
-    return FX.return_from_graveyard(target, item.controller, state)
+    return []
 
 def resolve_millstone(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
     target = item.targets[0] if item.targets else ""
@@ -122,6 +125,26 @@ def resolve_merfolk_looter(item: Any, state: GameState, game_stack: Optional[Any
 def resolve_rampant_growth(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
     return FX.search_library_and_put_on_battlefield(item.controller, "Land", True, state)
 
+def resolve_dark_ritual(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
+    state.mana_pools[item.controller]["B"] += 3
+    return [{"change_type": "ADD_MANA", "player": item.controller, "color": "B", "amount": 3}]
+
+def resolve_pacifism(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
+    target = item.targets[0] if item.targets else ""
+    permanent = state.get_permanent(target)
+    if not permanent:
+        return []
+    permanent["attached_pacifism"] = True
+    return [{"change_type": "ATTACH", "source": item.source, "target": target}]
+
+def resolve_royal_assassin(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
+    return FX.destroy_permanent(item.targets[0] if item.targets else "", state)
+
+def resolve_mother_of_runes(item: Any, state: GameState, game_stack: Optional[Any] = None) -> List[Dict[str, Any]]:
+    color = item.effect_payload.get("cost_payment", {}).get("color", "W")
+    color_name = {"W": "white", "U": "blue", "B": "black", "R": "red", "G": "green"}.get(color, "white")
+    return FX.grant_keyword(item.targets[0] if item.targets else "", f"protection_from_{color_name}", "end_of_turn", state)
+
 EFFECT_HANDLERS: Dict[str, Callable[[Any, GameState, Optional[Any]], List[Dict[str, Any]]]] = {
     "lightning_bolt": resolve_lightning_bolt,
     "shock": resolve_shock,
@@ -139,7 +162,7 @@ EFFECT_HANDLERS: Dict[str, Callable[[Any, GameState, Optional[Any]], List[Dict[s
     "mana_leak": resolve_counterspell,
     "giant_growth": resolve_giant_growth,
     "naturalize": resolve_naturalize,
-    "vines_of_vastwood": resolve_giant_growth,
+    "vines_of_vastwood": resolve_vines_of_vastwood,
     "swords_to_plowshares": resolve_swords_to_plowshares,
     "path_to_exile": resolve_path_to_exile,
     "healing_salve": resolve_healing_salve,
@@ -154,6 +177,10 @@ EFFECT_HANDLERS: Dict[str, Callable[[Any, GameState, Optional[Any]], List[Dict[s
     "prodigal_sorcerer": resolve_prodigal_sorcerer,
     "merfolk_looter": resolve_merfolk_looter,
     "rampant_growth": resolve_rampant_growth,
+    "dark_ritual": resolve_dark_ritual,
+    "pacifism": resolve_pacifism,
+    "royal_assassin": resolve_royal_assassin,
+    "mother_of_runes": resolve_mother_of_runes,
 }
 
 def get_effect_handler(base_id: str) -> Optional[Callable[[Any, GameState, Optional[Any]], List[Dict[str, Any]]]]:

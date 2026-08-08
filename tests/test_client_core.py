@@ -1,4 +1,5 @@
 import unittest
+import tkinter as tk
 import socket
 import threading
 import json
@@ -33,6 +34,34 @@ class TestClientCore(unittest.TestCase):
         self.assertEqual(st.last_seq_num, 5)
         self.assertEqual(st.current_state["phase"], "PRECOMBAT_MAIN")
 
+    def test_reset_for_lobby_keeps_player_id_and_clears_match_state(self):
+        st = ClientState(player_id="alice")
+        st.update_authoritative_state({"type": "GAME_STATE_UPDATE", "seq_num": 9, "state": {"turn": 2}})
+        st.update_authoritative_state({"type": "GAME_OVER", "seq_num": 10, "winner_id": "bob"})
+
+        st.reset_for_lobby()
+
+        self.assertEqual(st.player_id, "alice")
+        self.assertEqual(st.current_state, {})
+        self.assertEqual(st.latest_server_seq_num, 0)
+        self.assertFalse(st.is_game_over)
+        self.assertIsNone(st.game_over_info)
+
+    def test_priority_grant_updates_holder_for_both_clients(self):
+        alice = ClientState(player_id="alice")
+        bob = ClientState(player_id="bob")
+        alice.current_state = {"priority_holder": "alice"}
+        bob.current_state = {"priority_holder": "alice"}
+        grant = {"type": "PRIORITY_GRANT", "seq_num": 12, "player_id": "bob"}
+
+        alice.update_authoritative_state(grant)
+        bob.update_authoritative_state(grant)
+
+        self.assertEqual(alice.current_state["priority_holder"], "bob")
+        self.assertEqual(bob.current_state["priority_holder"], "bob")
+        self.assertIsNone(alice.priority_seq_num)
+        self.assertEqual(bob.priority_seq_num, 12)
+
     def test_player_ready_framed_and_transmitted(self):
         server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_sock.bind(("127.0.0.1", 0))
@@ -56,7 +85,7 @@ class TestClientCore(unittest.TestCase):
         transport = ClientTransport()
         transport.connect(host, port)
         
-        st = ClientState()
+        st = ClientState(player_id="alice")
         st.last_seq_num = 10
         ready_pdu = st.build_player_ready(["mountain_001"])
         transport.send_pdu(ready_pdu)
@@ -67,11 +96,15 @@ class TestClientCore(unittest.TestCase):
 
         self.assertEqual(len(received_pdus), 1)
         self.assertEqual(received_pdus[0]["type"], "PLAYER_READY")
-        self.assertEqual(received_pdus[0]["seq_num"], 10)
+        self.assertEqual(received_pdus[0]["player_id"], "alice")
+        self.assertEqual(received_pdus[0]["seq_num"], 1)
         self.assertEqual(received_pdus[0]["deck_list"], ["mountain_001"])
 
     def test_tkinter_client_initialization(self):
-        app = GraphicalGameClient(client_state=ClientState())
+        try:
+            app = GraphicalGameClient(client_state=ClientState())
+        except tk.TclError:
+            self.skipTest("Tkinter display environment unavailable")
         self.assertIn("MTGNP", app.title())
         app.destroy()
 
