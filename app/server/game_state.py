@@ -87,6 +87,7 @@ class StateBuilder:
             if not hasattr(client, "graveyard"):
                 client.graveyard = []
 
+        opponents = [c for c in clients if c.pid != viewing_client.pid]
         return {
             "turn": self.server.turn,
             "phase": self.server.phase,
@@ -95,12 +96,9 @@ class StateBuilder:
                 client.pid: client.life_total
                 for client in clients
             },
-            "hand": {
-                viewing_client.pid: list(viewing_client.hand)
-            },
+            "hand": list(viewing_client.hand),
             "hand_counts": {
-                client.pid: len(client.hand)
-                for client in clients
+                c.pid: len(c.hand) for c in opponents
             },
             "library_counts": {
                 client.pid: len(client.library)
@@ -125,6 +123,7 @@ class StateBuilder:
             raise ValueError("viewing_client must be in the current game.")
 
         self.server.phase = "UNTAP"
+        opponents = [c for c in clients if c.pid != viewing_client.pid]
 
         return {
             "turn": self.server.turn,
@@ -135,12 +134,9 @@ class StateBuilder:
                 client.pid: client.life_total
                 for client in clients
             },
-            "hand": {
-                viewing_client.pid: list(viewing_client.hand)
-            },
+            "hand": list(viewing_client.hand),
             "hand_counts": {
-                client.pid: len(client.hand)
-                for client in clients
+                c.pid: len(c.hand) for c in opponents
             },
             "library_counts": {
                 client.pid: len(client.library)
@@ -162,6 +158,8 @@ class StateBuilder:
         if viewing_client not in clients:
             raise ValueError("viewing_client must be in the current game.")
 
+        opponents = [c for c in clients if c.pid != viewing_client.pid]
+
         return {
             "turn": self.server.turn,
             "phase": self.server.phase,
@@ -176,12 +174,9 @@ class StateBuilder:
                 client.pid: client.life_total
                 for client in clients
             },
-            "hand": {
-                viewing_client.pid: list(viewing_client.hand)
-            },
+            "hand": list(viewing_client.hand),
             "hand_counts": {
-                client.pid: len(client.hand)
-                for client in clients
+                c.pid: len(c.hand) for c in opponents
             },
             "library_counts": {
                 client.pid: len(client.library)
@@ -198,6 +193,7 @@ class StateBuilder:
             "stack": list(getattr(self.server, "stack", [])),
             "attackers": list(getattr(self.server, "attackers", [])),
             "blockers": list(getattr(self.server, "blockers", [])),
+
             "damage_orders": dict(getattr(self.server, "damage_orders", {})),
             "attackers_declared": getattr(
                 self.server,

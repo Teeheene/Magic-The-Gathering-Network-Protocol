@@ -33,10 +33,12 @@ class ClientState:
 
         #seq_num
         self.latest_seq_num = 0
+        self.player_ready_seq_num = 1
         self.priority_seq_num = None
         self.phase_seq_num = None
         self.trigger_seq_num = None
         self.heartbeat_seq_num = 1
+
 
         #server prompts and results
         self.pending_request = None

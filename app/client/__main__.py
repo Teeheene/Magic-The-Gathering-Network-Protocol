@@ -1,4 +1,5 @@
 import argparse
+import sys
 
 from app.client.cli import (
     ask_to_try_again,
@@ -16,7 +17,7 @@ from app.client.state import ClientState
 
 
 def parse_args(argv=None):
-    parser = argparse.ArgumentParser(description="Run the MTGP command-line client.")
+    parser = argparse.ArgumentParser(description="Run the MTGP client interface.")
     parser.add_argument(
         "--host",
         default="127.0.0.1",
@@ -29,6 +30,16 @@ def parse_args(argv=None):
         help="server TCP port (default: %(default)s)",
     )
     parser.add_argument(
+        "--player-id",
+        default=None,
+        help="specify player ID directly",
+    )
+    parser.add_argument(
+        "--qt",
+        action="store_true",
+        help="launch PySide6 graphical interface",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -37,8 +48,34 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def launch_qt_client(args):
+    from PySide6.QtWidgets import QApplication
+    from app.client.qt.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    pid = args.player_id or "alice"
+    state = ClientState(pid)
+
+    conn = ClientConnection(args.host, args.port, args.verbose)
+    dispatcher = PduDispatcher(state, conn)
+    conn.pdu_handler = dispatcher.handle
+
+    window = MainWindow(state, dispatcher)
+    state.on_state_change = lambda: window.state_updated_signal.emit()
+
+    try:
+        conn.connect()
+        conn.start_heartbeat(dispatcher)
+    except OSError as err:
+        print(f"Connection failed: {err}")
+        return
+
+    window.show()
+    sys.exit(app.exec())
+
+
 def connection_screen(args):
-    username = prompt_connection_setup(args.host, args.port)
+    username = args.player_id or prompt_connection_setup(args.host, args.port)
     deck_list = prompt_deck_setup()
 
     client = ClientConnection(args.host, args.port, args.verbose)
@@ -67,6 +104,10 @@ def connection_screen(args):
 
 def main(argv=None):
     args = parse_args(argv)
+
+    if args.qt:
+        launch_qt_client(args)
+        return
 
     while True:
         dispatcher = connection_screen(args)

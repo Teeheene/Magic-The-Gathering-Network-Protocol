@@ -36,38 +36,50 @@ class ServerConnection:
 
     def wait_for_players(self):
         while self.running:
-            while len(self.clients) < self.max_clients and self.running:
-                self.sock.settimeout(0.5)
-                try:
-                    client_sock, address = self.sock.accept()
-                except (socket.timeout, TimeoutError, OSError):
-                    continue
-                print(f"Connection attempt from {address}")
-                client = ConnectedClient(
-                    sock=client_sock, address=address, verbose=self.verbose
-                )
+            # Clear ready status for all connected clients upon entering lobby
+            for client in list(self.clients):
+                client.ready_in_lobby = False
 
-                while self.running:
+            while self.running:
+                # Accept new connections if below max_clients
+                if len(self.clients) < self.max_clients:
+                    self.sock.settimeout(0.2)
                     try:
-                        pdu = client.receive()
-                    except (ConnectionError, OSError):
-                        print(f"{address} disconnected before joining")
-                        client.close()
-                        break
+                        client_sock, address = self.sock.accept()
+                        print(f"Connection attempt from {address}")
+                        client = ConnectedClient(
+                            sock=client_sock, address=address, verbose=self.verbose
+                        )
+                        self.clients.append(client)
+                    except (socket.timeout, TimeoutError, OSError):
+                        pass
 
-                    accepted = self.pdu_dispatcher.handle_player_ready(client, pdu)
-                    if accepted:
-                        state = self.state_builder.build_lobby_state()
-                        for joined_client in self.clients:
-                            self.pdu_dispatcher.send_game_state_update(
-                                joined_client,
-                                state,
-                            )
-                        break
+                # Check for PLAYER_READY from all connected clients
+                for client in list(self.clients):
+                    if not getattr(client, "ready_in_lobby", False):
+                        client.sock.settimeout(0.05)
+                        try:
+                            pdu = client.receive()
+                            if isinstance(pdu, dict) and pdu.get("type") == "PLAYER_READY":
+                                if self.pdu_dispatcher.handle_player_ready(client, pdu):
+                                    client.ready_in_lobby = True
+                                    state = self.state_builder.build_lobby_state()
+                                    for c in self.clients:
+                                        self.pdu_dispatcher.send_game_state_update(c, state)
+                        except (socket.timeout, TimeoutError, OSError):
+                            pass
+                        except ConnectionError:
+                            print(f"Client {client.address} disconnected in lobby.")
+                            if client in self.clients:
+                                self.clients.remove(client)
+                            client.close()
 
-            if self.running:
-                print("Lobby full!")
-                self.game.run_game_loop()
+                # Check if all clients are connected AND ready
+                ready_count = sum(1 for c in self.clients if getattr(c, "ready_in_lobby", False))
+                if len(self.clients) == self.max_clients and ready_count == self.max_clients:
+                    print("Both players connected and ready! Starting game loop...")
+                    self.game.run_game_loop()
+                    break
 
     def refuse_extra_connections(self):
         """Actively reject and close any additional connection attempts beyond max_clients."""
@@ -75,9 +87,10 @@ class ServerConnection:
         try:
             extra_sock, address = self.sock.accept()
             print(f"Refusing 3rd connection from {address}")
+            self.seq_num += 1
             err_pdu = {
                 "type": "ERROR",
-                "seq_num": self.seq_num + 1,
+                "seq_num": self.seq_num,
                 "code": "ILLEGAL_ACTION",
                 "message": "Lobby full. Server accepts maximum 2 players.",
                 "rejected_action": {},
@@ -93,15 +106,25 @@ class ServerConnection:
             pass
 
     def return_to_lobby(self, disconnected_client=None):
-        if disconnected_client and disconnected_client in self.clients:
-            self.clients.remove(disconnected_client)
+        if disconnected_client:
+            if disconnected_client in self.clients:
+                self.clients.remove(disconnected_client)
             disconnected_client.close()
             print(f"Player {disconnected_client.pid} disconnected.")
+
+            # Notify surviving player if game was running
+            survivor = self.clients[0] if self.clients else None
+            if survivor:
+                self.pdu_dispatcher.broadcast_game_over(
+                    winner_id=survivor.pid,
+                    reason="DISCONNECT"
+                )
 
         self.game.reset()
         for client in list(self.clients):
             client.mulligan_taken = 0
             client.mulligan_kept = False
+            client.ready_in_lobby = False
 
         lobby_state = self.state_builder.build_lobby_state()
         for client in list(self.clients):

@@ -83,28 +83,45 @@ class PduDispatcher:
 
     def _validate_priority_action(self, client, pdu):
         if getattr(self.server, "priority_holder", None) != client.pid:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "Only the current priority holder may perform this action.",
-                ERR_ILLEGAL_ACTION,
+                "NOT_YOUR_PRIORITY",
                 pdu
             )
-            client.send(error)
+        expected_seq = getattr(client, "active_priority_seq_num", None)
+        if pdu.get("seq_num") != expected_seq:
+            self.send_error(
+                client,
+                "seq_num does not match the active PRIORITY_GRANT token.",
+                "STALE_ACTION",
+                pdu
+            )
+            if self.server.priority_holder == client.pid:
+                self.reissue_priority_grant(client)
             return False
-        valid = self._validate_seq_num(client, pdu, "PRIORITY_GRANT")
-        if not valid and self.server.priority_holder == client.pid:
-            self.send_priority_grant(client, client.pid)
-        return valid
+        return True
+
+    def reissue_priority_grant(self, client):
+        pdu = {
+            "type": "PRIORITY_GRANT",
+            "seq_num": getattr(client, "active_priority_seq_num", self.server.seq_num),
+            "priority_holder": client.pid,
+            "time_limit_ms": 30000
+        }
+        client.send(pdu)
 
     def _validate_phase_seq_num(self, client, pdu):
-        if pdu.get("seq_num") == getattr(client, "phase_seq_num", None):
+        expected_seq = getattr(client, "active_phase_seq_num", None)
+        if pdu.get("seq_num") == expected_seq:
             return True
-        error = self.build_error(
-            "seq_num does not match the latest PHASE_TRANSITION.",
-            ERR_STALE_ACTION,
+        return self.send_error(
+            client,
+            "seq_num does not match the active PHASE_TRANSITION token.",
+            "STALE_ACTION",
             pdu
         )
-        client.send(error)
-        return False
+
 
     @staticmethod
     def _zone_card_ids(zone):
@@ -351,40 +368,45 @@ class PduDispatcher:
         return True
 
     def handle_cast_spell(self, client, pdu):
-        if not self._validate_priority_action(client, pdu):
-            return False
-
         card_id = pdu.get("card_id")
         targets = pdu.get("targets")
         mana_payment = pdu.get("mana_payment")
+
         if (
             not isinstance(card_id, str)
             or not isinstance(targets, list)
             or not isinstance(mana_payment, dict)
         ):
-            error = self.build_error(
-                "CAST_SPELL requires card_id, targets, and mana_payment.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "CAST_SPELL requires card_id, targets, and mana_payment.", "ILLEGAL_ACTION", pdu)
+
         if card_id not in client.hand:
-            error = self.build_error(
-                "The spell is not in your hand.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
+            return self.send_error(client, "The spell is not in your hand.", "ILLEGAL_ACTION", pdu)
+
+        card_data = self.server.card_data(card_id) or {}
+        card_type = card_data.get("card_type", "").casefold()
+
+        # Reject Land via CAST_SPELL
+        if "land" in card_type:
+            return self.send_error(client, "Lands cannot be cast as spells. Use PLAY_LAND.", "ILLEGAL_ACTION", pdu)
+
+        # Sorcery-speed timing check for Creature, Sorcery, Artifact, Enchantment
+        keywords = [k.casefold() for k in card_data.get("keywords", [])]
+        is_instant_or_flash = "instant" in card_type or "flash" in keywords
+
+        if not is_instant_or_flash:
+            if client.pid != self.server.active_player:
+                return self.send_error(client, "Sorcery-speed spells may only be cast on your turn.", "WRONG_PHASE", pdu)
+            if self.server.phase not in {"PRECOMBAT_MAIN", "POSTCOMBAT_MAIN"}:
+                return self.send_error(client, "Sorcery-speed spells may only be cast in a main phase.", "WRONG_PHASE", pdu)
+            if getattr(self.server, "stack", []):
+                return self.send_error(client, "Sorcery-speed spells may only be cast when the stack is empty.", "ILLEGAL_ACTION", pdu)
+
+        if not self._validate_priority_action(client, pdu):
             return False
+
         if not self.server.targets_are_legal(card_id, targets):
-            error = self.build_error(
-                "The spell's targets are missing or illegal.",
-                ERR_ILLEGAL_TARGET,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "The spell's targets are missing or illegal.", "ILLEGAL_TARGET", pdu)
+
 
         expected_payment = self.server.card_mana_cost(card_id)
         declared_payment = self.server.normalize_mana_payment(mana_payment)
@@ -1214,14 +1236,24 @@ class PduDispatcher:
             reason=reason
         )
 
-    def send_error(self, client, code, message, rejected_action):
+    def broadcast_game_over(self, winner_id: str, reason: str):
+        for client in list(self.server.clients):
+            try:
+                loser_id = next((c.pid for c in self.server.clients if c.pid != winner_id), None)
+                self.send_game_over(client, winner_id=winner_id, loser_id=loser_id, reason=reason)
+            except Exception:
+                pass
+
+
+    def send_error(self, client, message: str, code: str, pdu=None):
+        rejected_action = pdu if isinstance(pdu, dict) else {}
         rejected_seq_num = rejected_action.get("seq_num")
         seq_num = (
             rejected_seq_num
             if isinstance(rejected_seq_num, int)
             else self._next_seq_num()
         )
-        return self._send(
+        self._send(
             client,
             "ERROR",
             seq_num=seq_num,
@@ -1230,6 +1262,8 @@ class PduDispatcher:
             message=message,
             rejected_action=rejected_action
         )
+        return False
+
 
     def send_pong(self, client, ping):
         return self._send(

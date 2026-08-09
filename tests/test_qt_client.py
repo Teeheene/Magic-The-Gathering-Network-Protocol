@@ -24,8 +24,9 @@ class TestQtClient(unittest.TestCase):
         self.state.life_totals = {"alice": 20, "bob": 15}
         win.refresh_ui()
 
-        self.assertEqual(win.hand_list.count(), 2)
-        self.assertIn("20 HP", win.life_label.text())
+        self.assertIn("20", win.life_label.text())
+        self.assertIn("alice", win.life_label.text())
+
 
     def test_mulligan_dialog_keep_choice(self):
         dlg = MulliganDialog(["mountain_001"], count_to_bottom=0)

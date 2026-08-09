@@ -82,32 +82,44 @@ class CardCatalog:
         return card_id in self.catalog
 
     def is_valid_instance_id(self, card_id: str) -> bool:
-        """Check if card_id is a valid base ID or instance ID within allowed copy limits."""
+        """
+        Check if card_id is a valid instance ID with exactly three-digit suffix (e.g. mountain_001).
+        Base IDs alone are NOT accepted as protocol card instances.
+        """
         if not isinstance(card_id, str) or not card_id.strip():
             return False
         import re
+        match = re.match(r"^(.+)_(\d{3})$", card_id.strip())
+        if not match:
+            return False
+        base_id, index_str = match.groups()
+        if base_id not in self.catalog:
+            return False
+        max_copies = self.catalog[base_id].get("copies", 20)
+        index = int(index_str)
+        return 1 <= index <= max_copies
 
-        card_id = card_id.strip()
-        if card_id in self.catalog:
-            return True
-        match = re.match(r"^(.+)_(\d+)$", card_id)
-        if match:
-            base_id, index_str = match.groups()
-            if base_id in self.catalog:
-                max_copies = self.catalog[base_id].get("copies", 20)
-                index = int(index_str)
-                return 1 <= index <= max_copies
-        return False
+    def is_valid_deck(self, deck_list: List[str]) -> bool:
+        """Validate that every card in deck_list is a valid, unique instance ID."""
+        if not isinstance(deck_list, list) or len(deck_list) == 0:
+            return False
+        seen = set()
+        for cid in deck_list:
+            if not self.is_valid_instance_id(cid):
+                return False
+            if cid in seen:
+                return False  # Duplicate full instance ID rejected
+            seen.add(cid)
+        return True
 
     def get_all_card_ids(self) -> List[str]:
-
         return list(self.catalog.keys())
 
     def get_all_cards(self) -> List[Card]:
         return [self.create_card(card_id) for card_id in self.catalog]
 
     def create_copies(self, card_id: str, quantity: int) -> List[Card]:
-        """Create a number of cards without exceeding the catalog supply."""
+        """Create a number of unique card instances (e.g. mountain_001, mountain_002)."""
         if isinstance(quantity, bool) or not isinstance(quantity, int):
             raise TypeError("Card quantity must be an integer.")
         if quantity < 1:
@@ -123,7 +135,11 @@ class CardCatalog:
                 f"Only {available} copies of '{card_id}' are available."
             )
 
-        return [self.create_card(card_id) for _ in range(quantity)]
+        copies = []
+        for i in range(1, quantity + 1):
+            instance_id = f"{card_id}_{i:03d}"
+            copies.append(Card(instance_id, data))
+        return copies
 
     def create_deck(self, card_counts: Mapping[str, int]) -> List[Card]:
         """Build a flat list of Card objects from ``card_id: quantity`` pairs."""
@@ -131,6 +147,7 @@ class CardCatalog:
         for card_id, quantity in card_counts.items():
             deck.extend(self.create_copies(card_id, quantity))
         return deck
+
 
     def print_all_card_ids(self) -> None:
         print("\n====== CARD CATALOG ======")

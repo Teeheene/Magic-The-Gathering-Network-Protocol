@@ -1,4 +1,5 @@
 import socket
+import threading
 import time
 import unittest
 
@@ -23,38 +24,49 @@ class TestRealSocketIntegration(unittest.TestCase):
         except Exception:
             pass
 
-    def test_two_client_handshake_and_3rd_connection_refusal(self):
-        # Test server socket acceptance & connection refusal in non-blocking fashion
-        self.server.sock.settimeout(0.1)
+    def test_two_client_handshake_rematch_and_3rd_connection_refusal(self):
+        # Run server wait_for_players in background thread
+        server_thread = threading.Thread(target=self.server.wait_for_players, daemon=True)
+        server_thread.start()
 
+        # 1. Connect Client 1 & Client 2
         c1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         c1.connect(("127.0.0.1", self.port))
-
-        client_sock, addr = self.server.sock.accept()
-        self.assertIsNotNone(client_sock)
 
         c2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         c2.connect(("127.0.0.1", self.port))
 
-        client_sock2, addr2 = self.server.sock.accept()
-        self.assertIsNotNone(client_sock2)
+        deck1 = [f"mountain_{i:03d}" for i in range(1, 21)]
+        deck2 = [f"forest_{i:03d}" for i in range(1, 21)]
 
+        # 2. Client 1 sends PLAYER_READY (seq_num 1)
+        encode_pdu({"type": "PLAYER_READY", "seq_num": 1, "player_id": "alice", "deck_list": deck1})
+        c1.sendall(encode_pdu({"type": "PLAYER_READY", "seq_num": 1, "player_id": "alice", "deck_list": deck1}))
+
+        # Client 1 receives GAME_STATE_UPDATE for lobby (waiting for player 2)
+        pdu1 = decode_pdu(c1)
+        self.assertEqual(pdu1["type"], "GAME_STATE_UPDATE")
+        self.assertEqual(pdu1["state"]["phase"], "LOBBY")
+
+        # 3. Client 2 sends PLAYER_READY (seq_num 1)
+        c2.sendall(encode_pdu({"type": "PLAYER_READY", "seq_num": 1, "player_id": "bob", "deck_list": deck2}))
+
+        # Both receive GAME_STATE_UPDATE for lobby readiness and GAME_SETUP / MULLIGAN phase transition
+        pdu2_c1 = decode_pdu(c1)
+        pdu2_c2 = decode_pdu(c2)
+        self.assertEqual(pdu2_c1["type"], "GAME_STATE_UPDATE")
+        self.assertEqual(pdu2_c2["type"], "GAME_STATE_UPDATE")
+
+        # 4. Test 3rd connection refusal while lobby is running / full
         c3 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         c3.connect(("127.0.0.1", self.port))
-
-        # Test active 3rd connection refusal
         self.server.refuse_extra_connections()
         res3 = decode_pdu(c3)
         self.assertEqual(res3["type"], "ERROR")
         self.assertEqual(res3["code"], "ILLEGAL_ACTION")
         self.assertIn("Lobby full", res3["message"])
+        c3.close()
 
+        # Clean socket close
         c1.close()
         c2.close()
-        c3.close()
-        client_sock.close()
-        client_sock2.close()
-
-
-if __name__ == "__main__":
-    unittest.main()

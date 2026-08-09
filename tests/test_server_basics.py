@@ -30,8 +30,9 @@ class TestServerBasics(unittest.TestCase):
             "type": "PLAYER_READY",
             "seq_num": 1,
             "player_id": "alice",
-            "deck_list": ["mountain_001"] * 20,
+            "deck_list": [f"mountain_{i:03d}" for i in range(1, 21)],
         }
+
         accepted = dispatcher.handle_player_ready(client, ready_pdu)
         self.assertTrue(accepted)
         self.assertEqual(client.pid, "alice")
@@ -46,7 +47,7 @@ class TestServerBasics(unittest.TestCase):
             "type": "PLAYER_READY",
             "seq_num": 1,
             "player_id": "alice",
-            "deck_list": ["mountain_001"] * 20,
+            "deck_list": [f"mountain_{i:03d}" for i in range(1, 21)],
         })
 
         mock_socket2 = MagicMock()
@@ -55,7 +56,7 @@ class TestServerBasics(unittest.TestCase):
             "type": "PLAYER_READY",
             "seq_num": 2,
             "player_id": "alice",
-            "deck_list": ["mountain_001"] * 20,
+            "deck_list": [f"mountain_{i:03d}" for i in range(1, 21)],
         })
         self.assertFalse(accepted)
         mock_socket2.sendall.assert_called()
@@ -83,7 +84,7 @@ class TestServerBasics(unittest.TestCase):
             "type": "PLAYER_READY",
             "seq_num": 1,
             "player_id": "alice",
-            "deck_list": ["mountain_001"] * 20,
+            "deck_list": [f"mountain_{i:03d}" for i in range(1, 21)],
         })
         self.assertEqual(len(self.mock_connection.clients), 1)
 
@@ -92,7 +93,7 @@ class TestServerBasics(unittest.TestCase):
             "type": "PLAYER_READY",
             "seq_num": 2,
             "player_id": "alice",
-            "deck_list": ["forest_001"] * 20,
+            "deck_list": [f"forest_{i:03d}" for i in range(1, 21)],
         })
         self.assertTrue(accepted)
         self.assertEqual(len(self.mock_connection.clients), 1)
@@ -123,8 +124,9 @@ class TestServerBasics(unittest.TestCase):
         mock_socket1 = MagicMock()
         client = ConnectedClient(mock_socket1, ("127.0.0.1", 12345))
         client.pid = "alice"
-        client.phase_seq_num = 10
+        client.active_phase_seq_num = 10
         client.life_total = 20
+
         client.graveyard = []
         client.hand = []
         client.library = []

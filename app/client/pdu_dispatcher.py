@@ -148,12 +148,15 @@ class PduDispatcher:
 
     #send pdus
     def send_player_ready(self):
+        seq = self.state.player_ready_seq_num
+        self.state.player_ready_seq_num += 1
         self.connection.send({
             "type": "PLAYER_READY",
-            "seq_num": self.state.latest_seq_num,
+            "seq_num": seq,
             "player_id": self.state.pid,
             "deck_list": self.state.deck_list
         })
+
 
     def send_mulligan_choice(self, keep, cards_to_bottom=None):
         self.connection.send({

@@ -7,9 +7,12 @@ from pathlib import Path
 from app.server.pdu_dispatcher import PduDispatcher
 from app.server.game_state import StateBuilder
 from app.shared.card_catalog import CardCatalog
-
+from app.server.engine.triggers import EventBus, TriggerManager, GameEvent
+from app.server.engine.sba import StateBasedActions
+from app.server.engine.effects import CardEffects
 
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "shared" / "card_catalog.json"
+
 
 
 class Game:
@@ -39,6 +42,10 @@ class Game:
         self.blockers_declared = False
         self.next_stack_item_id = 1
         self.game_over = False
+        self.event_bus = EventBus()
+        self.trigger_manager = TriggerManager(self, self.card_catalog)
+        self.cant_gain_life_this_turn = False
+
 
     def game_setup(self):
         """Initialize a fresh match before players begin mulligans."""
@@ -633,10 +640,123 @@ class Game:
                 return True
         return False
 
-    def start_combat_damage(self):
-        if self.combat_has_first_strike():
-            return self.resolve_combat_damage(True)
-        return self.resolve_combat_damage(False)
+        self.event_bus = EventBus()
+        self.trigger_manager = TriggerManager(self, self.card_catalog)
+        self.cant_gain_life_this_turn = False
+
+    def post_event(self, event=None):
+        """Canonical post-event pipeline per MTG rules & RFC requirements."""
+        if event is not None:
+            self.event_bus.publish(event)
+            for trg in self.trigger_manager.detect_triggers_for_event(event):
+                self.trigger_manager.pending_triggers.append(trg)
+
+        # 1. Run State-Based Actions
+        changes, game_over_info = StateBasedActions.check_and_apply(self)
+        for change in changes:
+            if change.get("type") == "CREATURE_DIED":
+                death_event = GameEvent("creature_died", change)
+                self.event_bus.publish(death_event)
+                for trg in self.trigger_manager.detect_triggers_for_event(death_event):
+                    self.trigger_manager.pending_triggers.append(trg)
+
+        # 2. Check Game Over
+        if game_over_info is not None:
+            self.game_over = True
+            self.pdu_dispatcher.broadcast_game_over(game_over_info["winner_id"], game_over_info["reason"])
+            self.connection.return_to_lobby()
+            return False
+
+        # 3. Process Pending Triggers into stack items
+        while self.trigger_manager.pending_triggers:
+            trg = self.trigger_manager.pending_triggers.pop(0)
+            if trg.requires_target and trg.legal_targets:
+                ctrl_client = self.client_for_player(trg.controller)
+                if ctrl_client:
+                    self.pdu_dispatcher.send_trigger_choice_prompt(ctrl_client, trg)
+                    return False
+            stack_item = {
+                "stack_item_id": self.pdu_dispatcher._next_stack_item_id(),
+                "item_type": "TRIGGER_ABILITY",
+                "trigger_id": trg.trigger_id,
+                "source": trg.source_id,
+                "controller": trg.controller,
+                "effect_summary": trg.effect_summary,
+                "effect_fn": trg.effect_fn
+            }
+            self.stack.append(stack_item)
+            self.pdu_dispatcher.broadcast_stack_push(stack_item)
+
+        # 4. Broadcast updated game state
+        self.pdu_dispatcher._broadcast_game_state()
+
+        # 5. Grant priority ONLY when no mandatory decision is pending
+        if self.priority_holder and not self.has_pending_decision():
+            client = self.client_for_player(self.priority_holder)
+            if client:
+                self.pdu_dispatcher.send_priority_grant(client, self.priority_holder)
+
+        return True
+
+    def has_pending_decision(self) -> bool:
+        return bool(self.pending_damage_orders)
+
+    def resolve_top_stack_item(self):
+        if not self.stack:
+            return False
+        item = self.stack.pop()
+        item_type = item.get("item_type")
+        source_id = item.get("source", "")
+        controller = item.get("controller", "")
+        targets = item.get("targets", [])
+
+        ctrl_client = self.client_for_player(controller)
+        opp_client = self.other_client(ctrl_client) if ctrl_client else None
+
+        if item_type == "TRIGGER_ABILITY":
+            fn = item.get("effect_fn")
+            if callable(fn):
+                fn(item, self)
+        elif item_type == "SPELL":
+            base_id = self.base_card_id(source_id)
+            if targets and not self.targets_are_legal(source_id, targets):
+                # Spell FIZZLES
+                if ctrl_client:
+                    ctrl_client.graveyard.append(source_id)
+                self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), "FIZZLE", [])
+                return self.post_event()
+
+            status, changes = CardEffects.resolve_card_effect(base_id, source_id, targets, ctrl_client, opp_client, self)
+            card_data = self.card_data(source_id) or {}
+            card_type = card_data.get("card_type", "").casefold()
+
+            if "creature" in card_type or "artifact" in card_type or "enchantment" in card_type:
+                if ctrl_client:
+                    perm = {
+                        "id": source_id,
+                        "tapped": False,
+                        "summoning_sick": "creature" in card_type,
+                        "power": card_data.get("power", 0),
+                        "toughness": card_data.get("toughness", 0),
+                        "keywords": card_data.get("keywords", []),
+                        "damage": 0
+                    }
+                    ctrl_client.battlefield.append(perm)
+                    self.post_event(GameEvent("permanent_entered", {"creature_id": source_id, "controller": controller}))
+            else:
+                if ctrl_client:
+                    ctrl_client.graveyard.append(source_id)
+
+            self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), status, changes)
+
+        return self.post_event()
+
+    def get_effective_pt(self, permanent):
+        if not isinstance(permanent, dict):
+            return 0, 0
+        p = permanent.get("power", 0) + permanent.get("temp_power_buff", 0)
+        t = permanent.get("toughness", 0) + permanent.get("temp_toughness_buff", 0)
+        return max(0, p), max(0, t)
 
     def resolve_combat_damage(self, first_strike):
         phase = "FIRST_STRIKE_DAMAGE" if first_strike else "COMBAT_DAMAGE"
@@ -648,6 +768,9 @@ class Game:
         for attacker in getattr(self, "attackers", []):
             attacker_id = attacker["creature_id"]
             _, attacker_permanent = self.find_permanent(attacker_id)
+            if not isinstance(attacker_permanent, dict):
+                continue
+
             attacker_keywords = self.permanent_keywords(attacker_permanent)
             attacker_eligible = (
                 "first strike" in attacker_keywords
@@ -656,11 +779,9 @@ class Game:
                 "first strike" not in attacker_keywords
                 or "double strike" in attacker_keywords
             )
-            attacker_power = (
-                attacker_permanent.get("power", 0)
-                if isinstance(attacker_permanent, dict)
-                else 0
-            )
+
+            attacker_power, _ = self.get_effective_pt(attacker_permanent)
+
             assigned_blockers = [
                 blocker
                 for blocker in getattr(self, "blockers", [])
@@ -683,17 +804,22 @@ class Game:
                 [blocker["creature_id"] for blocker in assigned_blockers]
             )
             remaining_damage = attacker_power if attacker_eligible else 0
-            for blocker_id in order:
+
+            for idx, blocker_id in enumerate(order):
                 _, blocker_permanent = self.find_permanent(blocker_id)
                 if not isinstance(blocker_permanent, dict):
                     continue
-                lethal = max(
-                    0,
-                    blocker_permanent.get("toughness", 0)
-                    - blocker_permanent.get("damage", 0)
-                )
-                assigned_damage = min(remaining_damage, lethal)
-                if assigned_damage:
+
+                _, b_toughness = self.get_effective_pt(blocker_permanent)
+                lethal = max(0, b_toughness - blocker_permanent.get("damage", 0))
+
+                # Final blocker receives ALL remaining attacker damage per MTGNP rules
+                if idx == len(order) - 1:
+                    assigned_damage = remaining_damage
+                else:
+                    assigned_damage = min(remaining_damage, lethal)
+
+                if assigned_damage > 0:
                     blocker_permanent["damage"] = (
                         blocker_permanent.get("damage", 0) + assigned_damage
                     )
@@ -704,10 +830,10 @@ class Game:
                         "amount": assigned_damage
                     })
 
-            if isinstance(attacker_permanent, dict):
-                for blocker in assigned_blockers:
-                    blocker_id = blocker["creature_id"]
-                    _, blocker_permanent = self.find_permanent(blocker_id)
+            for blocker in assigned_blockers:
+                blocker_id = blocker["creature_id"]
+                _, blocker_permanent = self.find_permanent(blocker_id)
+                if isinstance(blocker_permanent, dict):
                     blocker_keywords = self.permanent_keywords(blocker_permanent)
                     blocker_eligible = (
                         "first strike" in blocker_keywords
@@ -716,87 +842,38 @@ class Game:
                         "first strike" not in blocker_keywords
                         or "double strike" in blocker_keywords
                     )
-                    if blocker_eligible and isinstance(blocker_permanent, dict):
-                        damage = blocker_permanent.get("power", 0)
+                    if blocker_eligible:
+                        b_power, _ = self.get_effective_pt(blocker_permanent)
                         attacker_permanent["damage"] = (
-                            attacker_permanent.get("damage", 0) + damage
+                            attacker_permanent.get("damage", 0) + b_power
                         )
-                        if damage:
+                        if b_power > 0:
                             damage_events.append({
                                 "source": blocker_id,
                                 "target": attacker_id,
-                                "amount": damage
+                                "amount": b_power
                             })
 
-        creatures_died = self.remove_lethally_damaged_creatures()
-        life_totals = {
-            client.pid: client.life_total
-            for client in self.clients
-        }
-        for client in self.clients:
-            self.pdu_dispatcher.send_combat_damage_result(
-                client,
-                damage_events,
-                life_totals,
-                creatures_died
-            )
-
-        losing_client = next(
-            (client for client in self.clients if client.life_total <= 0),
-            None,
-        )
-        if losing_client is not None:
-            return self.end_game(losing_client, "LIFE_ZERO")
-
-        if not self.broadcast_game_state():
-            return False
+        self.post_event(GameEvent("combat_damage_dealt", {"damage_events": damage_events}))
 
         if first_strike:
-            self.consecutive_priority_passes = 0
-            return self.grant_priority(self.active_player)
+            return self.open_priority_window()
         return self.enter_priority_phase("END_OF_COMBAT")
 
-    def remove_lethally_damaged_creatures(self):
-        creatures_died = []
-        for client in self.clients:
-            survivors = []
-            for permanent in client.battlefield:
-                lethal = (
-                    isinstance(permanent, dict)
-                    and permanent.get("toughness") is not None
-                    and permanent.get("damage", 0) >= permanent["toughness"]
-                )
-                if lethal:
-                    card_id = permanent["id"]
-                    creatures_died.append(card_id)
-                    client.graveyard.append(card_id)
-                else:
-                    survivors.append(permanent)
-            client.battlefield = survivors
-        return creatures_died
-
-    def cleanup(self):
-        self.priority_holder = None
-        if not self.transition_phase("CLEANUP"):
-            return False
-        if not self.broadcast_game_state():
-            return False
-
-        active_client = self.client_for_player(self.active_player)
-        if active_client is None:
-            return False
-        if len(active_client.hand) > 7:
-            return True
-        return self.finish_cleanup()
-
     def finish_cleanup(self):
+        self.cant_gain_life_this_turn = False
         for client in self.clients:
             for permanent in client.battlefield:
                 if isinstance(permanent, dict):
                     permanent["damage"] = 0
+                    permanent["temp_power_buff"] = 0
+                    permanent["temp_toughness_buff"] = 0
+                    permanent["cant_regenerate"] = False
 
         if not self.broadcast_game_state():
             return False
+        return True
+
 
         active_client = self.client_for_player(self.active_player)
         next_client = self.other_client(active_client)
