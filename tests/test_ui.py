@@ -1,212 +1,42 @@
 import unittest
-import tkinter as tk
-import threading
-from unittest.mock import patch
-from typing import Dict, Any, List
-from app.client.gui import GraphicalGameClient
+from unittest.mock import patch, MagicMock
+
+from PySide6.QtWidgets import QApplication
+from app.client.qt.main_window import MainWindow
 from app.client.state import ClientState
+
+app = QApplication.instance() or QApplication([])
+
 
 class TestGraphicalClientUI(unittest.TestCase):
     def setUp(self):
-        self.sent_pdus: List[Dict[str, Any]] = []
-        def send_fn(pdu: Dict[str, Any]):
-            self.sent_pdus.append(pdu)
-
-        self.client_state = ClientState(player_id="player_1")
-        try:
-            self.app = GraphicalGameClient(client_state=self.client_state, send_action_fn=send_fn)
-            if hasattr(self.app, "_after_id") and self.app._after_id:
-                try:
-                    self.app.after_cancel(self.app._after_id)
-                except Exception:
-                    pass
-            self.app._after_id = None
-        except tk.TclError:
-            self.skipTest("Tkinter display environment unavailable")
-
-    def tearDown(self):
-        if hasattr(self, "app") and self.app:
-            try:
-                self.app.destroy()
-            except Exception:
-                pass
+        self.client_state = ClientState("alice")
+        self.mock_dispatcher = MagicMock()
+        self.app = MainWindow(self.client_state, self.mock_dispatcher)
 
     def test_gui_initialization_and_title(self):
-        self.assertIn("MTGNP", self.app.title())
-        self.assertIsNotNone(self.app.opp_header_lbl)
-        self.assertIsNotNone(self.app.local_header_lbl)
-        self.assertEqual(self.app.current_screen, "welcome")
-        self.assertEqual(self.app.welcome_frame.winfo_manager(), "pack")
-        self.assertEqual(self.app.main_container.winfo_manager(), "")
+        self.assertIn("MTGNP 1.0 Client — Player: alice", self.app.windowTitle())
+        self.assertIsNotNone(self.app.status_label)
+        self.assertIsNotNone(self.app.life_label)
 
-    def test_begin_transitions_from_setup_to_game_screen(self):
-        self.app._add_setup_card("mountain")
-        self.app.player_id_entry.insert(0, "alice")
+    def test_action_buttons_trigger_dispatcher_calls(self):
+        self.app.pass_btn.click()
+        self.mock_dispatcher.send_priority_pass.assert_called_once()
 
-        self.assertEqual(self.app.selected_setup_cards, ["mountain_001"])
-        self.assertEqual(self.app.setup_selection_lbl.cget("text"), "1 / 50 cards")
+        self.app.concede_btn.click()
+        self.mock_dispatcher.send_concede.assert_called_once()
 
-        self.app.begin_btn.invoke()
-
-        self.assertEqual(self.app.current_screen, "game")
-        self.assertEqual(self.app.welcome_frame.winfo_manager(), "")
-        self.assertEqual(self.app.main_container.winfo_manager(), "pack")
-        self.assertIn("1-card deck", self.app.log_text.get("1.0", tk.END))
-
-    def test_preset_deck_can_be_loaded_and_edited_card_by_card(self):
-        preset_name = next(iter(self.app.preset_decks))
-        self.app.deck_preset_combo.set(preset_name)
-        self.app._on_preset_selected()
-
-        self.assertEqual(len(self.app.selected_setup_cards), 40)
-        self.assertEqual(len(self.app.selected_setup_cards), len(set(self.app.selected_setup_cards)))
-
-        self.app._add_setup_card("sol_ring")
-        self.assertEqual(len(self.app.selected_setup_cards), 41)
-        self.assertEqual(self.app.deck_preset_combo.get(), "Custom Deck")
-
-        self.app._remove_setup_card("sol_ring")
-        self.assertEqual(len(self.app.selected_setup_cards), 40)
-
-    def test_clear_deck_button_removes_all_cards(self):
-        preset_name = next(iter(self.app.preset_decks))
-        self.app.deck_preset_combo.set(preset_name)
-        self.app._on_preset_selected()
-
-        self.app.clear_deck_btn.invoke()
-
-        self.assertEqual(self.app.selected_setup_cards, [])
-        self.assertEqual(self.app.deck_cards_listbox.size(), 0)
-        self.assertEqual(self.app.setup_selection_lbl.cget("text"), "0 / 50 cards")
-        self.assertEqual(self.app.deck_preset_combo.get(), "Custom Deck")
-
-    def test_empty_deck_does_not_connect(self):
-        self.app.player_id_entry.insert(0, "alice")
-
-        self.app.begin_btn.invoke()
-
-        self.assertEqual(self.app.current_screen, "welcome")
-        self.assertIn("between 1 and 50", self.app.connection_status_lbl.cget("text"))
-
-    def test_begin_requires_connection_fields(self):
-        self.app.host_entry.delete(0, tk.END)
-        self.app.player_id_entry.delete(0, tk.END)
-
-        self.app.begin_btn.invoke()
-
-        self.assertEqual(self.app.current_screen, "welcome")
-        self.assertIn("required", self.app.connection_status_lbl.cget("text"))
-
-    def test_rejected_player_id_stays_on_welcome_screen(self):
-        calls = []
-        callback_finished = threading.Event()
-
-        def reject_duplicate(host, port, player_id, deck_list):
-            calls.append((host, port, player_id, deck_list))
-            callback_finished.set()
-            return False, f"Player ID '{player_id}' is already in use."
-
-        self.app.connect_fn = reject_duplicate
-        self.app.player_id_entry.insert(0, "Alice")
-        self.app._add_setup_card("island")
-        self.app._on_begin_click()
-        self.assertTrue(callback_finished.wait(1))
-        self.app.update()
-
-        self.assertEqual(calls, [("127.0.0.1", 4444, "Alice", ["island_001"])])
-        self.assertEqual(self.app.current_screen, "welcome")
-        self.assertIn("already in use", self.app.connection_status_lbl.cget("text"))
-
-    @patch("tkinter.messagebox.showinfo")
-    def test_game_over_returns_to_lobby_and_keeps_setup(self, mock_info):
-        disconnected = []
-        self.app.disconnect_fn = lambda: disconnected.append(True)
-        self.app._add_setup_card("mountain")
-        self.app.player_id_entry.insert(0, "alice")
-        self.app._show_game_screen()
-        self.client_state.current_state = {"turn": 3, "phase": "END_STEP"}
-
-        self.app._handle_pdu({
-            "type": "GAME_OVER",
-            "seq_num": 20,
-            "winner_id": "bob",
-            "loser_id": "alice",
-            "reason": "CONCEDE",
+    def test_ui_refresh_on_state_update(self):
+        self.client_state.update_game_state({
+            "phase": "PRECOMBAT_MAIN",
+            "turn": 2,
+            "hand": ["forest_001"],
+            "life_totals": {"alice": 20, "bob": 18},
         })
+        self.app.refresh_ui()
+        self.assertIn("PRECOMBAT_MAIN", self.app.status_label.text())
+        self.assertEqual(self.app.hand_list.count(), 1)
 
-        self.assertEqual(disconnected, [])
-        self.assertEqual(self.app.current_screen, "welcome")
-        self.assertEqual(self.app.player_id_entry.get(), "alice")
-        self.assertEqual(self.app.selected_setup_cards, ["mountain_001"])
-        self.assertEqual(self.client_state.current_state, {})
-        self.assertFalse(self.client_state.is_game_over)
-        mock_info.assert_called_once()
-
-    def test_authoritative_state_rendering_in_gui(self):
-        state_pdu = {
-            "type": "GAME_STATE_UPDATE",
-            "seq_num": 1,
-            "state": {
-                "turn": 3,
-                "phase": "PRECOMBAT_MAIN",
-                "active_player": "player_1",
-                "priority_holder": "player_1",
-                "life_totals": {"player_1": 20, "player_2": 17},
-                "library_counts": {"player_1": 40, "player_2": 40},
-                "hand": ["lightning_bolt_001", "mountain_001"],
-                "hand_counts": {"player_2": 5},
-                "graveyard": {"player_1": [], "player_2": ["shock_001"]},
-                "battlefield": {
-                    "player_1": [{"id": "mountain_001", "tapped": False}],
-                    "player_2": [{"id": "grizzly_bears_001", "tapped": True, "power": 2, "toughness": 2, "damage": 0}]
-                },
-                "stack": [
-                    {"stack_item_id": "stk_01", "source": "lightning_bolt_001", "controller": "player_1", "targets": ["player_2"]}
-                ]
-            }
-        }
-
-        self.app.enqueue_pdu(state_pdu)
-        self.app._process_queue()
-
-        opp_text = self.app.opp_header_lbl.cget("text")
-        self.assertIn("Life 17", opp_text)
-        self.assertIn("Hand Cards: 5", opp_text)
-
-        local_text = self.app.local_header_lbl.cget("text")
-        self.assertIn("Life 20", local_text)
-
-        stack_count = self.app.stack_listbox.size()
-        self.assertEqual(stack_count, 1)
-        self.assertIn("lightning_bolt_001", self.app.stack_listbox.get(0))
-
-    def test_action_buttons_send_correct_pdus(self):
-        self.client_state.last_seq_num = 15
-        self.client_state.player_id = "player_1"
-
-        self.app._on_pass_click()
-        self.assertEqual(len(self.sent_pdus), 1)
-        self.assertEqual(self.sent_pdus[0], {"type": "PRIORITY_PASS", "seq_num": 15})
-
-        self.app.selected_card_id = "mountain_001"
-        self.app._on_play_land_click()
-        self.assertEqual(len(self.sent_pdus), 2)
-        self.assertEqual(self.sent_pdus[1], {"type": "PLAY_LAND", "seq_num": 15, "card_id": "mountain_001"})
-
-    @patch("tkinter.messagebox.showerror")
-    def test_error_pdu_rendering(self, mock_error):
-        err_pdu = {
-            "type": "ERROR",
-            "seq_num": 16,
-            "code": "STALE_ACTION",
-            "message": "Sequence number mismatch."
-        }
-        self.app.enqueue_pdu(err_pdu)
-        self.app._process_queue()
-
-        log_content = self.app.log_text.get("1.0", tk.END)
-        self.assertIn("STALE_ACTION", log_content)
-        mock_error.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()

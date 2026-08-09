@@ -1,8 +1,9 @@
 import random
 import unittest
 
-from app.server.game.session import GameSession
-from app.server.network.server import Server
+from tests.app_old_compat import GameState, Server
+
+
 
 
 class FakePlayer:

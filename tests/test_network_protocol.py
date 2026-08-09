@@ -3,8 +3,10 @@ import threading
 import time
 import unittest
 
-from app.client.transport import ClientTransport
-from app.server.network.server import Server
+from app.client.connection import ClientConnection
+from tests.app_old_compat import Server
+
+
 
 
 class TestPersistentNetworkLifecycle(unittest.TestCase):

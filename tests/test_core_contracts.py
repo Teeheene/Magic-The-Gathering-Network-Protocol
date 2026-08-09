@@ -3,17 +3,15 @@ import socket
 import threading
 import json
 import struct
-from app.shared.cards import CardCatalog
+from typing import Dict, List, Any
+from app.shared.card_catalog import CardCatalog
 from app.client.state import ClientState
-from app.client.actions import ClientActionFactory
-from app.client.transport import ClientTransport, recv_exact
-from app.server.game.game_state import GameState
-from app.server.game.stack import GameStack, StackItem
-from app.server.game.combat import CombatManager
-from app.server.game.triggers import TriggerManager, calculate_devotion_to_black
-from app.server.game.sba import StateBasedActions
-from app.server.game.events import GameEvent
-from app.server.game.effect_handlers import resolve_counterspell, resolve_gray_merchant
+from app.client.pdu_dispatcher import PduDispatcher
+
+from app.server.engine.triggers import TriggerManager, calculate_devotion, GameEvent
+from app.server.engine.sba import StateBasedActions
+from app.server.engine.effects import CardEffects
+
 
 class TestCoreContracts(unittest.TestCase):
     def test_pdu_action_factory_schemas(self):

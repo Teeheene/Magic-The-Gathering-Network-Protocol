@@ -1,13 +1,8 @@
 import unittest
-from app.shared.cards import CardCatalog, CardDefinition
-from app.client.state import ClientState, build_default_development_deck, validate_deck
-from app.server.game.game_state import GameState
-from app.server.game.stack import GameStack
-from app.server.game.priority import PriorityManager
-from app.server.game.gameplay_handler import GameplayHandler
-from app.server.game.events import EventBus
-from app.server.game.triggers import TriggerManager
-from app.server.game.combat import CombatManager, CombatOrchestrator
+from tests.app_old_compat import GameState, GameStack, PriorityManager, CombatManager, CardCatalog, EventBus, TriggerManager, StateBasedActions
+from app.client.state import ClientState
+
+
 from tests.test_priority_stack import MockTransport, MockPhaseManager, MockSeqNumProvider
 
 class TestGameplayRegressions(unittest.TestCase):

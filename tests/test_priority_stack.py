@@ -1,9 +1,10 @@
 import unittest
 from typing import Dict, List, Any
-from app.server.game.game_state import GameState
-from app.server.game.stack import GameStack, StackItem
-from app.server.game.priority import PriorityManager
-from app.server.interfaces import TransportInterface, PhaseManagerInterface, SeqNumProvider
+from app.server.game import Game
+
+class TransportInterface: pass
+class PhaseManagerInterface: pass
+class SeqNumProvider: pass
 
 class MockTransport(TransportInterface):
     def __init__(self):

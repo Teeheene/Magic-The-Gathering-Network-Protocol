@@ -1,8 +1,7 @@
 import unittest
 from typing import Dict, List, Any
-from app.server.game.game_state import GameState
-from app.server.game.cards import CardCatalog
-from app.server.game.combat import CombatManager
+from tests.app_old_compat import GameState, CombatManager, CardCatalog
+
 from tests.test_priority_stack import MockTransport, MockSeqNumProvider
 
 class TestCombatSystem(unittest.TestCase):

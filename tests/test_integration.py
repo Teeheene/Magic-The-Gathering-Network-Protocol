@@ -1,15 +1,9 @@
 import unittest
 from typing import Dict, List, Any
-from app.server.game.game_state import GameState
-from app.server.game.stack import GameStack
-from app.server.game.priority import PriorityManager
-from app.server.game.gameplay_handler import GameplayHandler
-from app.server.game.combat import CombatManager
-from app.server.game.triggers import TriggerManager
-from app.server.game.sba import StateBasedActions
-from app.server.game.events import GameEvent
+from tests.app_old_compat import GameState, GameStack, PriorityManager, CombatManager, CardCatalog, EventBus, TriggerManager, StateBasedActions, GameEvent
 from app.client.state import ClientState
-from tests.test_priority_stack import MockTransport, MockPhaseManager, MockSeqNumProvider
+
+
 
 class TestGameplayIntegrationScenario(unittest.TestCase):
     def setUp(self):

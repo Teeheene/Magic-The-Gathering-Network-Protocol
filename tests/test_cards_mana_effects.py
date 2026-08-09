@@ -1,12 +1,8 @@
 import unittest
 from typing import Dict, List, Any
-from app.server.game.game_state import GameState
-from app.server.game.stack import GameStack
-from app.server.game.priority import PriorityManager
-from app.server.game.cards import CardCatalog
-from app.server.game.mana import ManaPayment
-from app.server.game.gameplay_handler import GameplayHandler
-from tests.test_priority_stack import MockTransport, MockPhaseManager, MockSeqNumProvider
+from tests.app_old_compat import GameState, GameStack, PriorityManager, CombatManager, CardCatalog, CardEffects
+
+
 
 class TestCardsManaEffects(unittest.TestCase):
     def setUp(self):

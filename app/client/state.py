@@ -42,7 +42,36 @@ class ClientState:
         self.pending_request = None
         self.last_stack_resolution = None
         self.last_combat_damage_result = None
-        self.last_error = None
         self.last_pong_timestamp = None
         self.is_game_over = False
         self.game_over_info = None
+
+    def update_game_state(self, state_dict):
+        self.current_state = state_dict
+        if "turn" in state_dict:
+            self.turn = state_dict["turn"]
+        if "phase" in state_dict:
+            self.phase = state_dict["phase"]
+        if "active_player" in state_dict:
+            self.active_player = state_dict["active_player"]
+        if "priority_holder" in state_dict:
+            self.priority_holder = state_dict["priority_holder"]
+        if "life_totals" in state_dict:
+            self.life_totals = state_dict["life_totals"]
+        if "hand" in state_dict:
+            self.local_hand = state_dict["hand"]
+        if "battlefield" in state_dict:
+            self.battlefield = state_dict["battlefield"]
+        if "stack" in state_dict:
+            self.stack = state_dict["stack"]
+
+    def reset_for_lobby(self):
+        self.phase = "LOBBY"
+        self.turn = 0
+        self.active_player = None
+        self.priority_holder = None
+        self.local_hand = []
+        self.stack = []
+        self.is_game_over = False
+        self.game_over_info = None
+

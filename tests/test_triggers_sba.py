@@ -1,11 +1,8 @@
 import unittest
 from typing import Dict, List, Any
-from app.server.game.game_state import GameState
-from app.server.game.stack import GameStack
-from app.server.game.events import GameEvent
-from app.server.game.triggers import TriggerManager, TriggeredAbility
-from app.server.game.sba import StateBasedActions
-from tests.test_priority_stack import MockTransport, MockSeqNumProvider
+from tests.app_old_compat import GameState, TriggerManager, TriggeredAbility, GameEvent, StateBasedActions
+
+
 
 class TestTriggersAndSBA(unittest.TestCase):
     def setUp(self):
