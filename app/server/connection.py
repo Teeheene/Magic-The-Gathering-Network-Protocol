@@ -1,4 +1,5 @@
 import socket
+from typing import Optional
 
 from app.server.connected_client import ConnectedClient
 from app.server.game import Game
@@ -16,7 +17,9 @@ class ServerConnection:
         self.port = port
         self.max_clients = max_clients
         self.verbose = verbose
+        self.running = True
         self.clients = []
+        self.seq_num = 0
 
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -32,19 +35,19 @@ class ServerConnection:
         print(f"Waiting for {self.max_clients} players...")
 
     def wait_for_players(self):
-        while True:
-            while len(self.clients) < self.max_clients:
+        while self.running:
+            while len(self.clients) < self.max_clients and self.running:
                 self.sock.settimeout(0.5)
                 try:
                     client_sock, address = self.sock.accept()
-                except (socket.timeout, TimeoutError):
+                except (socket.timeout, TimeoutError, OSError):
                     continue
                 print(f"Connection attempt from {address}")
                 client = ConnectedClient(
                     sock=client_sock, address=address, verbose=self.verbose
                 )
 
-                while True:
+                while self.running:
                     try:
                         pdu = client.receive()
                     except (ConnectionError, OSError):
@@ -54,7 +57,6 @@ class ServerConnection:
 
                     accepted = self.pdu_dispatcher.handle_player_ready(client, pdu)
                     if accepted:
-                        self.clients.append(client)
                         state = self.state_builder.build_lobby_state()
                         for joined_client in self.clients:
                             self.pdu_dispatcher.send_game_state_update(
@@ -63,8 +65,9 @@ class ServerConnection:
                             )
                         break
 
-            print("Lobby full!")
-            self.game.run_game_loop()
+            if self.running:
+                print("Lobby full!")
+                self.game.run_game_loop()
 
     def refuse_extra_connections(self):
         """Actively reject and close any additional connection attempts beyond max_clients."""
