@@ -156,8 +156,21 @@ class PduDispatcher:
             client.send(error)
             return False
 
+        if any(
+            not self.server.card_catalog.is_valid_instance_id(card_id)
+            for card_id in deck_list
+        ):
+            error = self.build_error(
+                "deck_list contains invalid or unauthorized card IDs.",
+                ERR_ILLEGAL_DECK,
+                pdu
+            )
+            client.send(error)
+            return False
+
         if isinstance(player_id, str) and any(
-            isinstance(existing_client.pid, str)
+            existing_client is not client
+            and isinstance(existing_client.pid, str)
             and existing_client.pid.casefold() == player_id.casefold()
             for existing_client in self.server.clients
         ):
@@ -172,7 +185,9 @@ class PduDispatcher:
         client.pid = player_id 
         client.deck_list = list(deck_list)
         client.seq_num = self.server.seq_num + 1 
-        self.server.clients.append(client)
+        if client not in self.server.clients:
+            self.server.clients.append(client)
+
 
         print(
             f"{client.pid} accepted. "
@@ -711,6 +726,14 @@ class PduDispatcher:
                     str(keyword).casefold().replace("_", " ")
                     for keyword in permanent.get("keywords", [])
                 }
+                if "defender" in keywords:
+                    error = self.build_error(
+                        "Creatures with Defender cannot attack.",
+                        ERR_ILLEGAL_ACTION,
+                        pdu
+                    )
+                    client.send(error)
+                    return False
                 if permanent.get("tapped") or (
                     permanent.get("summoning_sick")
                     and "haste" not in keywords
@@ -728,9 +751,15 @@ class PduDispatcher:
         self.server.attackers_declared = True
         for permanent in attacking_permanents:
             if isinstance(permanent, dict):
-                permanent["tapped"] = True
+                keywords = {
+                    str(k).casefold().replace("_", " ")
+                    for k in permanent.get("keywords", [])
+                }
+                if "vigilance" not in keywords:
+                    permanent["tapped"] = True
         self._broadcast_game_state()
         return self.server.after_attackers_declared()
+
 
     def handle_declare_blockers(self, client, pdu):
         if getattr(self.server, "phase", None) != "DECLARE_BLOCKERS":
@@ -801,10 +830,30 @@ class PduDispatcher:
                 )
                 client.send(error)
                 return False
+        for blocker in blockers:
+            blocker_id = blocker["creature_id"]
+            blocking_id = blocker["blocking_id"]
+            _, blocker_perm = self.server.find_permanent(blocker_id)
+            _, attacker_perm = self.server.find_permanent(blocking_id)
+
+            blocker_keywords = self.server.permanent_keywords(blocker_perm)
+            attacker_keywords = self.server.permanent_keywords(attacker_perm)
+
+            if "flying" in attacker_keywords:
+                if "flying" not in blocker_keywords and "reach" not in blocker_keywords:
+                    error = self.build_error(
+                        "Ground creatures without Flying or Reach cannot block flying creatures.",
+                        ERR_ILLEGAL_ACTION,
+                        pdu
+                    )
+                    client.send(error)
+                    return False
+
         if any(
             blocker["blocking_id"] not in attacking_ids
             for blocker in blockers
         ):
+
             error = self.build_error(
                 "A blocker targets a non-attacker.",
                 ERR_ILLEGAL_ACTION,
@@ -881,7 +930,14 @@ class PduDispatcher:
         return self.server.after_damage_order(attacker_id)
 
     def handle_play_land(self, client, pdu):
-        if not self._validate_priority_action(client, pdu):
+        """
+        MTGNP Specification Note:
+        - Section 5.4 specifies that PLAY_LAND correlates seq_num with PRIORITY_GRANT.
+        - Section 7.5 explicitly states: 'Playing a land is a special action... It does not use the stack and does not require priority.'
+        Per course instructions, priority_holder is NOT an independent legality requirement for PLAY_LAND.
+        Legality requires: active player, PRECOMBAT_MAIN/POSTCOMBAT_MAIN phase, empty stack, land not already played, card in hand, card is a Land.
+        """
+        if not self._validate_seq_num(client, pdu, "PRIORITY_GRANT"):
             return False
         if client.pid != self.server.active_player:
             error = self.build_error(
@@ -894,6 +950,14 @@ class PduDispatcher:
         if self.server.phase not in {"PRECOMBAT_MAIN", "POSTCOMBAT_MAIN"}:
             error = self.build_error(
                 "Lands may only be played in a main phase.",
+                ERR_WRONG_PHASE,
+                pdu
+            )
+            client.send(error)
+            return False
+        if self.server.stack:
+            error = self.build_error(
+                "Lands may only be played when the stack is empty.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
@@ -904,6 +968,16 @@ class PduDispatcher:
         if not isinstance(card_id, str) or card_id not in client.hand:
             error = self.build_error(
                 "The land is not in your hand.",
+                ERR_ILLEGAL_ACTION,
+                pdu
+            )
+            client.send(error)
+            return False
+
+        card_data = self.server.card_data(card_id) or {}
+        if "land" not in card_data.get("card_type", "").casefold():
+            error = self.build_error(
+                "Card played is not a land.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
@@ -929,8 +1003,8 @@ class PduDispatcher:
         self.server.land_played_this_turn = land_plays
         self.server.consecutive_priority_passes = 0
         self._broadcast_game_state()
-        self.send_priority_grant(client, client.pid)
         return True
+
 
     def handle_discard(self, client, pdu):
         if not self._validate_seq_num(client, pdu, "GAME_STATE_UPDATE"):

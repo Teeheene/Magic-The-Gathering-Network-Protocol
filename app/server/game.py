@@ -122,10 +122,62 @@ class Game:
 
     def targets_are_legal(self, card_id, targets):
         card_data = self.card_data(card_id) or {}
-        requires_target = "target" in card_data.get("text", "").casefold()
+        text = card_data.get("text", "").casefold()
+        requires_target = "target" in text
         if not requires_target:
             return not targets
-        return len(targets) == 1 and self.target_exists(targets[0])
+        if len(targets) != 1:
+            return False
+
+        target_id = targets[0]
+        base_id = self.base_card_id(card_id)
+
+        # Counterspells: target must be on stack
+        if base_id in {"counterspell", "cancel", "mana_leak", "negate"}:
+            stack_item = next(
+                (item for item in self.stack if item.get("stack_item_id") == target_id),
+                None,
+            )
+            if stack_item is None:
+                return False
+            if base_id == "negate":
+                target_source_id = stack_item.get("source", "")
+                target_card_data = self.card_data(target_source_id) or {}
+                if "creature" in target_card_data.get("card_type", "").casefold():
+                    return False
+            return True
+
+        # Player-only targets
+        if base_id == "lava_spike" or "target player" in text:
+            return self.client_for_player(target_id) is not None
+
+        # Creature-only targets
+        if base_id in {"flame_slash", "unsummon"} or "target creature" in text:
+            owner, permanent = self.find_permanent(target_id)
+            if permanent is None or not isinstance(permanent, dict):
+                return False
+            perm_data = self.card_data(permanent.get("id", "")) or {}
+            if "creature" not in perm_data.get("card_type", "").casefold() and permanent.get("toughness") is None:
+                return False
+            if base_id == "terror":
+                if "artifact" in perm_data.get("card_type", "").casefold() or perm_data.get("color") == "B":
+                    return False
+            if base_id == "doom_blade":
+                if perm_data.get("color") == "B":
+                    return False
+            return True
+
+        # Artifact / Enchantment targets
+        if base_id == "naturalize":
+            owner, permanent = self.find_permanent(target_id)
+            if permanent is None or not isinstance(permanent, dict):
+                return False
+            perm_data = self.card_data(permanent.get("id", "")) or {}
+            perm_type = perm_data.get("card_type", "").casefold()
+            return "artifact" in perm_type or "enchantment" in perm_type
+
+        return self.target_exists(target_id)
+
 
     @staticmethod
     def normalize_mana_payment(payment):
@@ -260,7 +312,11 @@ class Game:
         targets = stack_item.get("targets", [])
         target_id = targets[0] if targets else None
 
+        if targets and not self.targets_are_legal(source_id, targets):
+            return "FIZZLE", []
+
         damage_amounts = {
+
             "lightning_bolt": 3,
             "shock": 2,
             "lava_spike": 3,
@@ -854,6 +910,7 @@ class Game:
             return
 
         while self.clients and not self.game_over:
+            self.connection.refuse_extra_connections()
             sockets = [client.sock for client in self.clients]
             readable, _, _ = select.select(sockets, [], [], 0.5)
 
@@ -869,3 +926,4 @@ class Game:
                 except (ConnectionError, OSError):
                     self.return_to_lobby(client)
                     return
+
