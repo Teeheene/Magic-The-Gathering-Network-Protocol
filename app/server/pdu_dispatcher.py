@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import random
 from typing import TYPE_CHECKING
+from collections import Counter
 
 if TYPE_CHECKING:
     from app.server.connection import ServerConnection
@@ -123,15 +125,7 @@ class PduDispatcher:
         return True
 
     def handle_mulligan_choice(self, client, pdu):
-        import random
-        from collections import Counter
-
-        def send_mulligan_state():
-            self.send_game_state_update(
-                client,
-                self.server.state_builder.build_mulligan_state(client)
-            )
-
+        # ERROR HANDLINGGG
         required_state = (
             "hand",
             "library"
@@ -162,8 +156,8 @@ class PduDispatcher:
             )
             client.send(error)
             return False
+        # ENDS HERE
 
-        # ERROR HANDLINGGG
         keep = pdu.get("keep")
         cards_to_bottom = pdu.get("cards_to_bottom")
         if not isinstance(keep, bool) or not isinstance(cards_to_bottom, list):
@@ -199,7 +193,10 @@ class PduDispatcher:
             client.hand = deck[:7]
             client.library = deck[7:]
             client.mulligan_taken += 1
-            send_mulligan_state()
+            self.send_game_state_update(
+                client,
+                self.server.state_builder.build_mulligan_state(client)
+            )
             return True
 
         if len(cards_to_bottom) != client.mulligan_taken:
@@ -221,14 +218,16 @@ class PduDispatcher:
             )
             client.send(error)
             return False
-        # ENDS HERE
 
         for card_id in cards_to_bottom:
             client.hand.remove(card_id)
             client.library.append(card_id)
 
         client.mulligan_kept = True
-        send_mulligan_state()
+        self.send_game_state_update(
+            client,
+            self.server.state_builder.build_mulligan_state(client)
+        )
         return True
 
     def handle_priority_pass(self, client, pdu):

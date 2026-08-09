@@ -1,8 +1,8 @@
 import socket
+import select
 from app.server.connected_client import ConnectedClient
 from app.server.pdu_dispatcher import PduDispatcher
 from app.server.game_state import StateBuilder 
-from app.shared.protocol import encode_pdu, decode_pdu
 
 class ServerConnection:
     def __init__(self, 
@@ -64,14 +64,7 @@ class ServerConnection:
         print("Lobby full!")
         self.run_game_loop()
 
-    def run_game_loop(self):
-        """Run mulligans, enter the first turn, then dispatch game actions."""
-        import select
-
-        if len(self.clients) != self.max_clients:
-            raise RuntimeError("The game cannot start until the lobby is full.")
-
-        #send mulligan phase
+    def handle_mulligan_phase(self):
         for client in self.clients:
             self.pdu_dispatcher.send_game_state_update(
                 client,
@@ -79,42 +72,57 @@ class ServerConnection:
             )
 
         while not all(client.mulligan_kept for client in self.clients):
-            sockets = [
-                client.sock
+            waiting_clients = {
+                client.sock: client
                 for client in self.clients
                 if not client.mulligan_kept
-            ]
-            readable, _, _ = select.select(sockets, [], [], 0.5)
+            }
+            readable, _, _ = select.select(waiting_clients, [], [])
 
             for ready_socket in readable:
-                client = next(
-                    player
-                    for player in self.clients
-                    if player.sock is ready_socket
-                )
+                client = waiting_clients[ready_socket]
 
                 try:
-                    pdu = {}
                     pdu = client.receive()
                 except (ConnectionError, OSError):
                     client.close()
                     self.clients.remove(client)
-                    return
+                    return False
 
                 self.pdu_dispatcher.handle_mulligan_choice(client, pdu)
 
-        self.turn += 1
-        active_player = self.active_player
+        return True
 
+    def handle_untap_phase(self):
+        self.turn += 1
         self.phase = "UNTAP"
+
+        #transition phase and build untap_phase
         for client in self.clients:
             self.pdu_dispatcher.send_phase_transition(
                 client,
                 "MULLIGAN",
                 self.phase,
-                active_player,
+                self.active_player,
                 self.turn
             )
+            self.pdu_dispatcher.send_game_state_update(
+                client,
+                self.state_builder.build_untap_state(client)
+            )
+
+    def run_game_loop(self):
+        """Run mulligans, enter the first turn, then dispatch game actions."""
+
+        if len(self.clients) != self.max_clients:
+            raise RuntimeError("The game cannot start until the lobby is full.")
+
+        #phases
+        if not self.handle_mulligan_phase():
+            return
+
+        self.handle_untap_phase()
+        active_player = self.active_player
 
         self.phase = "UPKEEP"
         for client in self.clients:

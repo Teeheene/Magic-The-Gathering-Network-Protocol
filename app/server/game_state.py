@@ -1,5 +1,13 @@
 import random
 
+"""
+    functions in this file include the ff:
+    build_lobby_state(self)
+    build_mulligan_state(self, viewing_client)
+    build_untap_state()
+
+    NOTE: These states appear inside of GAME_STATE_UPDATE
+"""
 
 class StateBuilder:
     def __init__(self, server):
@@ -57,6 +65,46 @@ class StateBuilder:
             "turn": self.server.turn,
             "phase": self.server.phase,
             "active_player": self.server.active_player,
+            "life_totals": {
+                client.pid: client.life_total
+                for client in clients
+            },
+            "hand": {
+                viewing_client.pid: list(viewing_client.hand)
+            },
+            "hand_counts": {
+                client.pid: len(client.hand)
+                for client in clients
+            },
+            "library_counts": {
+                client.pid: len(client.library)
+                for client in clients
+            },
+            "battlefield": {
+                client.pid: list(client.battlefield)
+                for client in clients
+            },
+            "graveyard": {
+                client.pid: list(client.graveyard)
+                for client in clients
+            },
+            "stack": list(self.server.stack),
+        }
+
+    def build_untap_state(self, viewing_client):
+        clients = self.server.clients
+        if not clients:
+            raise RuntimeError("Cannot build untap state without players.")
+        if viewing_client not in clients:
+            raise ValueError("viewing_client must be in the current game.")
+
+        self.server.phase = "UNTAP"
+
+        return {
+            "turn": self.server.turn,
+            "phase": self.server.phase,
+            "active_player": self.server.active_player,
+            "priority_holder": None,
             "life_totals": {
                 client.pid: client.life_total
                 for client in clients
