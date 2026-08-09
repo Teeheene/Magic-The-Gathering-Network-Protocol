@@ -174,8 +174,12 @@ class MainWindow(QMainWindow):
         if not item:
             return
         card_id = item.text()
-        base_id = card_id.split("_")[0] if "_" in card_id else card_id
-        card_data = self.card_catalog.get_card_data(base_id) or {}
+
+
+        base_id = CardCatalog.base_card_id(card_id)
+        card_data = self.card_catalog.get_card_data(card_id) or {}
+
+
         mana_cost = card_data.get("mana_cost", {})
 
         targets = []

@@ -75,11 +75,27 @@ class CardCatalog:
 
         return Card(card_id, data)
 
+    @staticmethod
+    def base_card_id(card_id: str) -> str:
+        """Strip only the final _NNN three-digit suffix from card_id if present."""
+        import re
+        if not isinstance(card_id, str):
+            return str(card_id)
+        return re.sub(r"_\d{3}$", "", card_id.strip())
+
     def get_card_data(self, card_id: str) -> Optional[Dict[str, Any]]:
-        return self.catalog.get(card_id)
+        if not isinstance(card_id, str):
+            return None
+        if card_id in self.catalog:
+            return self.catalog[card_id]
+        base_id = self.base_card_id(card_id)
+        return self.catalog.get(base_id)
 
     def exists(self, card_id: str) -> bool:
-        return card_id in self.catalog
+        if card_id in self.catalog:
+            return True
+        return self.base_card_id(card_id) in self.catalog
+
 
     def is_valid_instance_id(self, card_id: str) -> bool:
         """

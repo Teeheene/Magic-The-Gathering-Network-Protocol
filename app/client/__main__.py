@@ -109,24 +109,26 @@ def main(argv=None):
         launch_qt_client(args)
         return
 
+    dispatcher = None
     while True:
-        dispatcher = connection_screen(args)
-
-        if (
-            dispatcher is not None
-            and dispatcher.state.current_state.get("phase") == "LOBBY"
-        ):
-            dispatcher.connection.close()
-            show_returning_to_connection()
-            continue
-
-        if not ask_to_try_again():
-            if dispatcher is not None:
+        if dispatcher is None or not dispatcher.connection.running:
+            dispatcher = connection_screen(args)
+        else:
+            print("\nReturning to Lobby on existing connection...")
+            dispatcher.send_player_ready()
+            if not wait_for_phase(dispatcher, "MULLIGAN"):
+                if not ask_to_try_again():
+                    dispatcher.connection.close()
+                    return
                 dispatcher.connection.close()
+                dispatcher = None
+                continue
+            mulligan_screen(dispatcher)
+
+        if dispatcher is not None and not ask_to_try_again():
+            dispatcher.connection.close()
             return
 
-        if dispatcher is not None:
-            dispatcher.connection.close()
 
 
 if __name__ == "__main__":

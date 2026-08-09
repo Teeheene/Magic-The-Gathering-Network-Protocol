@@ -178,7 +178,9 @@ class TestServerBasics(unittest.TestCase):
         client = ConnectedClient(mock_socket1, ("127.0.0.1", 12345))
         client.pid = "alice"
         client.seq_num = 5
+        client.active_priority_seq_num = 5
         client.hand = ["mountain_001"]
+
         client.library = []
         client.battlefield = []
         client.life_total = 20

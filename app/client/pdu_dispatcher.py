@@ -144,7 +144,26 @@ class PduDispatcher:
         self.state.last_error = deepcopy(pdu)
 
     def handle_pong(self, pdu):
-        self.state.last_pong_timestamp = pdu.get("timestamp")
+        seq = pdu.get("seq_num")
+        if seq == getattr(self.state, "pending_ping_seq", None) or getattr(self.state, "pending_ping_seq", None) is None:
+            self.state.last_pong_timestamp = time.time()
+            self.state.pending_ping_seq = None
+
+    def send_ping(self, timestamp=None):
+        if timestamp is None:
+            timestamp = int(time.time() * 1000)
+
+        seq = self.state.heartbeat_seq_num
+        self.state.heartbeat_seq_num += 1
+        self.state.pending_ping_seq = seq
+        self.state.ping_send_time = time.time()
+
+        self.connection.send({
+            "type": "PING",
+            "seq_num": seq,
+            "timestamp": timestamp
+        })
+
 
     #send pdus
     def send_player_ready(self):
@@ -265,15 +284,6 @@ class PduDispatcher:
             "player_id": self.state.pid
         })
 
-    def send_ping(self, timestamp=None):
-        if timestamp is None:
-            timestamp = int(time.time() * 1000)
-
-        self.connection.send({
-            "type": "PING",
-            "seq_num": self.state.heartbeat_seq_num,
-            "timestamp": timestamp
-        })
         self.state.heartbeat_seq_num += 1
 
     def _priority_seq_num(self):

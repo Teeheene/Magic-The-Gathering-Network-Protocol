@@ -11,10 +11,15 @@ ERR_ILLEGAL_DECK = "ILLEGAL_DECK"
 ERR_DUPLICATE_ID = "DUPLICATE_ID"
 ERR_STALE_ACTION = "STALE_ACTION"
 ERR_ILLEGAL_ACTION = "ILLEGAL_ACTION"
+ERR_NOT_YOUR_PRIORITY = "NOT_YOUR_PRIORITY"
+ERR_WRONG_PHASE = "WRONG_PHASE"
 ERR_UNKNOWN_TYPE = "UNKNOWN_TYPE"
 ERR_INVALID_JSON = "INVALID_JSON"
 ERR_INSUFFICIENT_MANA = "INSUFFICIENT_MANA"
 ERR_ILLEGAL_TARGET = "ILLEGAL_TARGET"
+ERR_TRIGGER_ORDER_INVALID = "TRIGGER_ORDER_INVALID"
+ERR_TRIGGER_CHOICE_INVALID = "TRIGGER_CHOICE_INVALID"
+
 MSG_DECK_TOO_LARGE = "Deck contains {count} cards; maximum is 50."
 MSG_EMPTY_PLAYER_ID = "player_id must be a non-empty string."
 MSG_DUPLICATE_ID = "player_id is already claimed by the other player."
@@ -102,14 +107,27 @@ class PduDispatcher:
             return False
         return True
 
+    def _validate_land_action(self, client, pdu):
+        expected_seq = getattr(client, "active_priority_seq_num", getattr(client, "seq_num", None))
+        if expected_seq is not None and pdu.get("seq_num") != expected_seq:
+            return self.send_error(
+                client,
+                "seq_num does not match the active PRIORITY_GRANT token.",
+                "STALE_ACTION",
+                pdu
+            )
+        return True
+
+
     def reissue_priority_grant(self, client):
         pdu = {
             "type": "PRIORITY_GRANT",
             "seq_num": getattr(client, "active_priority_seq_num", self.server.seq_num),
-            "priority_holder": client.pid,
+            "player_id": client.pid,
             "time_limit_ms": 30000
         }
         client.send(pdu)
+
 
     def _validate_phase_seq_num(self, client, pdu):
         expected_seq = getattr(client, "active_phase_seq_num", None)
@@ -320,34 +338,17 @@ class PduDispatcher:
         return True
 
     def handle_priority_pass(self, client, pdu):
-        if getattr(self.server, "priority_holder", None) != client.pid:
-            error = self.build_error(
-                "Only the current priority holder may pass priority.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
-
-        if pdu.get("seq_num") != client.seq_num:
-            error = self.build_error(
-                "PRIORITY_PASS seq_num does not match the latest PRIORITY_GRANT.",
-                ERR_STALE_ACTION,
-                pdu
-            )
-            client.send(error)
-            self.send_priority_grant(client, client.pid)
+        if not self._validate_priority_action(client, pdu):
             return False
 
         next_client = self.server.other_client(client)
         if next_client is None:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "Cannot pass priority without another connected player.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
 
         self.server.consecutive_priority_passes = (
             getattr(self.server, "consecutive_priority_passes", 0) + 1
@@ -366,6 +367,7 @@ class PduDispatcher:
             self.server.priority_holder
         )
         return True
+
 
     def handle_cast_spell(self, client, pdu):
         card_id = pdu.get("card_id")
@@ -959,36 +961,43 @@ class PduDispatcher:
         Per course instructions, priority_holder is NOT an independent legality requirement for PLAY_LAND.
         Legality requires: active player, PRECOMBAT_MAIN/POSTCOMBAT_MAIN phase, empty stack, land not already played, card in hand, card is a Land.
         """
-        if not self._validate_seq_num(client, pdu, "PRIORITY_GRANT"):
+        if not self._validate_land_action(client, pdu):
             return False
+
         if client.pid != self.server.active_player:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "Only the active player may play a land.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
         if self.server.phase not in {"PRECOMBAT_MAIN", "POSTCOMBAT_MAIN"}:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "Lands may only be played in a main phase.",
                 ERR_WRONG_PHASE,
                 pdu
             )
-            client.send(error)
-            return False
-        if self.server.stack:
-            error = self.build_error(
+        if getattr(self.server, "stack", []):
+            return self.send_error(
+                client,
                 "Lands may only be played when the stack is empty.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
+        land_played_map = getattr(self.server, "land_played_this_turn", {})
+        if land_played_map.get(client.pid, False):
+            return self.send_error(
+                client,
+                "You have already played a land this turn.",
+                ERR_ILLEGAL_ACTION,
+                pdu
+            )
 
         card_id = pdu.get("card_id")
         if not isinstance(card_id, str) or card_id not in client.hand:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "The land is not in your hand.",
                 ERR_ILLEGAL_ACTION,
                 pdu
@@ -1114,7 +1123,13 @@ class PduDispatcher:
 
     #SEND PDUS
     def send_game_state_update(self, client, state):
-        return self._send(client, "GAME_STATE_UPDATE", state=state)
+        pdu = self._send(client, "GAME_STATE_UPDATE", state=state)
+        phase = state.get("phase") if isinstance(state, dict) else None
+        if phase == "MULLIGAN":
+            client.active_mulligan_seq_num = pdu["seq_num"]
+        elif phase == "CLEANUP":
+            client.active_cleanup_seq_num = pdu["seq_num"]
+        return pdu
 
     def send_phase_transition(
         self,
@@ -1132,16 +1147,18 @@ class PduDispatcher:
             active_player=active_player,
             turn=turn
         )
-        client.phase_seq_num = pdu["seq_num"]
+        client.active_phase_seq_num = pdu["seq_num"]
         return pdu
 
     def send_priority_grant(self, client, player_id, time_limit_ms=60000):
-        return self._send(
+        pdu = self._send(
             client,
             "PRIORITY_GRANT",
             player_id=player_id,
             time_limit_ms=time_limit_ms
         )
+        client.active_priority_seq_num = pdu["seq_num"]
+        return pdu
 
     def send_stack_push(
         self,
@@ -1164,12 +1181,14 @@ class PduDispatcher:
 
     def send_trigger_order(self, client, player_id, trigger_ids):
         client.pending_trigger_ids = list(trigger_ids)
-        return self._send(
+        pdu = self._send(
             client,
             "TRIGGER_ORDER",
             player_id=player_id,
             trigger_ids=list(trigger_ids)
         )
+        client.active_trigger_seq_num = pdu["seq_num"]
+        return pdu
 
     def send_trigger_choice(
         self,
@@ -1185,7 +1204,7 @@ class PduDispatcher:
             "requires_target": requires_target,
             "legal_targets": list(legal_targets or [])
         }
-        return self._send(
+        pdu = self._send(
             client,
             "TRIGGER_CHOICE",
             trigger_id=trigger_id,
@@ -1194,6 +1213,9 @@ class PduDispatcher:
             requires_target=requires_target,
             legal_targets=list(legal_targets or [])
         )
+        client.active_trigger_seq_num = pdu["seq_num"]
+        return pdu
+
 
     def send_stack_resolve(
         self,

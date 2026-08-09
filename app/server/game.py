@@ -624,7 +624,13 @@ class Game:
             for keyword in permanent.get("keywords", [])
         }
 
+    def start_combat_damage(self):
+        if self.combat_has_first_strike():
+            return self.resolve_combat_damage(True)
+        return self.resolve_combat_damage(False)
+
     def combat_has_first_strike(self):
+
         combat_ids = {
             attacker["creature_id"]
             for attacker in getattr(self, "attackers", [])
@@ -860,7 +866,22 @@ class Game:
             return self.open_priority_window()
         return self.enter_priority_phase("END_OF_COMBAT")
 
+    def cleanup(self):
+        self.priority_holder = None
+        if not self.transition_phase("CLEANUP"):
+            return False
+        if not self.broadcast_game_state():
+            return False
+
+        active_client = self.client_for_player(self.active_player)
+        if active_client is None:
+            return False
+        if len(active_client.hand) > 7:
+            return self.enter_action_phase("CLEANUP")
+        return self.finish_cleanup()
+
     def finish_cleanup(self):
+
         self.cant_gain_life_this_turn = False
         for client in self.clients:
             for permanent in client.battlefield:
@@ -869,11 +890,6 @@ class Game:
                     permanent["temp_power_buff"] = 0
                     permanent["temp_toughness_buff"] = 0
                     permanent["cant_regenerate"] = False
-
-        if not self.broadcast_game_state():
-            return False
-        return True
-
 
         active_client = self.client_for_player(self.active_player)
         next_client = self.other_client(active_client)
@@ -887,71 +903,11 @@ class Game:
         self.attackers_declared = False
         self.blockers_declared = False
         self.pending_damage_orders = set()
+
         if not self.handle_untap_phase():
             return False
         return self.upkeep()
 
-    def resolve_top_stack_item(self):
-        if not self.stack:
-            return False
-
-        stack_item = self.stack.pop()
-        result = "RESOLVED"
-        state_changes = []
-        if stack_item.get("item_type") == "SPELL":
-            controller = self.client_for_player(stack_item.get("controller"))
-            if controller is not None:
-                source_id = stack_item["source"]
-                card_data = self.card_data(source_id) or {}
-                card_type = card_data.get("card_type", "").casefold()
-                if any(
-                    permanent_type in card_type
-                    for permanent_type in ("creature", "artifact", "enchantment")
-                ):
-                    permanent = {"id": source_id, "tapped": False}
-                    if "creature" in card_type:
-                        permanent.update({
-                            "power": card_data.get("power", 0),
-                            "toughness": card_data.get("toughness", 0),
-                            "damage": 0,
-                            "summoning_sick": True,
-                            "keywords": list(card_data.get("keywords", [])),
-                        })
-                    controller.battlefield.append(permanent)
-                    state_changes.append({
-                        "type": "PERMANENT_ENTERS",
-                        "card_id": source_id,
-                        "controller": controller.pid,
-                        "tapped": False,
-                    })
-                else:
-                    result, state_changes = self.resolve_stack_effect(stack_item)
-                    controller.graveyard.append(source_id)
-        elif stack_item.get("item_type") == "ABILITY":
-            result, state_changes = self.resolve_stack_effect(stack_item)
-
-        creatures_died = self.remove_lethally_damaged_creatures()
-        state_changes.extend(
-            {"type": "DESTROY", "target": creature_id}
-            for creature_id in creatures_died
-        )
-
-        for client in self.clients:
-            self.pdu_dispatcher.send_stack_resolve(
-                client,
-                stack_item["stack_item_id"],
-                result,
-                state_changes
-            )
-        if not self.broadcast_game_state():
-            return False
-
-        losing_client = self.losing_player()
-        if losing_client is not None:
-            return self.end_game(losing_client, "LIFE_ZERO")
-
-        self.consecutive_priority_passes = 0
-        return self.grant_priority(self.active_player)
 
     def end_game(self, losing_client, reason):
         winning_client = self.other_client(losing_client)
