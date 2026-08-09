@@ -39,7 +39,9 @@ class ClientConnection:
                 pdu = self.receive()
                 if self.pdu_handler is not None:
                     self.pdu_handler(pdu)
-            except ConnectionError:
+            except ValueError as error:
+                print(f"Invalid server PDU: {error}")
+            except (ConnectionError, OSError):
                 print("Server Disconnected.")
                 self.running = False
         

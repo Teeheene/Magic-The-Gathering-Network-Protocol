@@ -46,6 +46,14 @@ class PduDispatcher:
 
         #lobby phase deals with no game setup
         if server_state.get("phase") == "LOBBY":
+            self.state.phase = "LOBBY"
+            self.state.joined = False
+            self.state.active_player = None
+            self.state.priority_holder = None
+            self.state.priority_seq_num = None
+            self.state.phase_seq_num = None
+            self.state.trigger_seq_num = None
+            self.state.pending_request = None
             return
 
         remembered_fields = (
@@ -60,6 +68,13 @@ class PduDispatcher:
             "battlefield",
             "graveyard",
             "stack",
+            "land_played_this_turn",
+            "attackers",
+            "blockers",
+            "damage_orders",
+            "attackers_declared",
+            "blockers_declared",
+            "pending_damage_orders",
         )
         for field in remembered_fields:
             if field in server_state:
@@ -76,6 +91,7 @@ class PduDispatcher:
 
     def handle_phase_transition(self, pdu):
         self.state.phase_seq_num = pdu["seq_num"]
+        self.state.priority_seq_num = None
         self.state.phase = pdu.get("to_phase", self.state.phase)
         self.state.active_player = pdu.get(
             "active_player",
@@ -120,6 +136,7 @@ class PduDispatcher:
     def handle_game_over(self, pdu):
         self.state.is_game_over = True
         self.state.game_over_info = deepcopy(pdu)
+        self.state.phase = "GAME_OVER"
         self.state.priority_holder = None
         self.state.priority_seq_num = None
 

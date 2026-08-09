@@ -23,6 +23,13 @@ class ClientState:
         self.battlefield = {}
         self.graveyard = {}
         self.stack = []
+        self.land_played_this_turn = False
+        self.attackers = []
+        self.blockers = []
+        self.damage_orders = {}
+        self.attackers_declared = False
+        self.blockers_declared = False
+        self.pending_damage_orders = []
 
         #seq_num
         self.latest_seq_num = 0
