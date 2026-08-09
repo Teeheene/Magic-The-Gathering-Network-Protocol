@@ -33,6 +33,26 @@ class ClientConnection:
         )
         thread.start()
 
+    def start_heartbeat(self, dispatcher):
+        """Start a background daemon thread that sends PING every 30s."""
+        heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            args=(dispatcher,),
+            daemon=True
+        )
+        heartbeat_thread.start()
+
+    def _heartbeat_loop(self, dispatcher):
+        import time
+        while self.running:
+            time.sleep(30)
+            if not self.running:
+                break
+            try:
+                dispatcher.send_ping()
+            except Exception:
+                break
+
     def listen(self):
         while self.running:
             try:

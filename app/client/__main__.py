@@ -53,9 +53,11 @@ def connection_screen(args):
     state.deck_list = [card.card_id for card in deck_list]
     dispatcher = PduDispatcher(state, client)
     client.pdu_handler = dispatcher.handle
+    client.start_heartbeat(dispatcher)
 
     prompt_join_lobby()
     dispatcher.send_player_ready()
+
     if not wait_for_phase(dispatcher, "MULLIGAN"):
         return dispatcher
 

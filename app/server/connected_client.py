@@ -1,23 +1,37 @@
-from app.shared.protocol import encode_pdu, decode_pdu
+from typing import Optional
+from app.shared.protocol import decode_pdu, encode_pdu
+
 
 class ConnectedClient:
-    def __init__(self, sock, address):
+    def __init__(self, sock, address, verbose: Optional[bool] = False):
         self.sock = sock
         self.address = address
+        self.verbose = verbose
         self.pid = None
 
         self.mulligan_taken = 0
         self.mulligan_kept = False
 
+        # Token tracking per RFC §5.3
+        self.active_priority_seq_num = None
+        self.active_phase_seq_num = None
+        self.active_trigger_seq_num = None
+        self.active_mulligan_seq_num = None
+        self.active_cleanup_seq_num = None
+        self.phase_seq_num = None
+
     def send(self, pdu):
         self.sock.sendall(
-            encode_pdu(pdu)
+            encode_pdu(pdu, verbose=self.verbose, label="SERVER SENT PDU")
         )
 
     def receive(self):
         return decode_pdu(
-            self.sock
+            self.sock, verbose=self.verbose, label="SERVER RECEIVED PDU"
         )
 
     def close(self):
-        self.sock.close()
+        try:
+            self.sock.close()
+        except OSError:
+            pass
