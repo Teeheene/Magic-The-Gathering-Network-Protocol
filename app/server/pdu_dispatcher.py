@@ -7,14 +7,18 @@ if TYPE_CHECKING:
 
 ERR_ILLEGAL_DECK = "ILLEGAL_DECK"
 ERR_DUPLICATE_ID = "DUPLICATE_ID"
+ERR_STALE_ACTION = "STALE_ACTION"
 ERR_ILLEGAL_ACTION = "ILLEGAL_ACTION"
 ERR_UNKNOWN_TYPE = "UNKNOWN_TYPE"
 ERR_INVALID_JSON = "INVALID_JSON"
-MSG_DECK_TOO_LARGE = "Deck contains {count} cards; maximum is 50."
+MSG_DECK_TOO_LARGE = "Deck contains {count} cards; maximum is 51."
 MSG_EMPTY_PLAYER_ID = "player_id must be a non-empty string."
 MSG_DUPLICATE_ID = "player_id is already claimed by the other player."
 MSG_UNKNOWN_TYPE = "Unknown PDU type."
 MSG_INVALID_JSON = "Received bytes could not be parsed as valid UTF-8 JSON."
+MSG_MULLIGAN_STALE = "Mulligan seq_num does not match the latest GAME_STATE_UPDATE."
+MSG_MULLIGAN_WRONG_BOTTOM_COUNT = "cards_to_bottom must contain exactly {count} card(s)."
+MSG_MULLIGAN_CARD_NOT_IN_HAND = "cards_to_bottom contains a card that is not in the player's current hand."
 
 class PduDispatcher:
     def __init__(self, server: ServerConnection):
@@ -42,11 +46,15 @@ class PduDispatcher:
 
         handler = self.handlers.get(pdu_type)
         if handler is None:
-            raise ValueError(
-                f"Unknown PDU type: {pdu_type}"
+            error = self.build_error(
+                MSG_UNKNOWN_TYPE,
+                ERR_UNKNOWN_TYPE,
+                pdu
             )
+            client.send(error)
+            return False
 
-        handler(client, pdu)
+        return handler(client, pdu)
 
     #errors
     def build_error(self, message: str, code: str, pdu):
@@ -61,11 +69,31 @@ class PduDispatcher:
     #RECEIVE PDUS
     def handle_player_ready(self, client, pdu):
         player_id = pdu.get("player_id")
+        deck_list = pdu.get("deck_list")
+
         if not player_id or player_id == "":
             error = self.build_error(
-                ERR_ILLEGAL_ACTION, 
-                MSG_EMPTY_PLAYER_ID, 
+                MSG_EMPTY_PLAYER_ID,
+                ERR_ILLEGAL_ACTION,
                 pdu)
+            client.send(error)
+            return False
+
+        if not isinstance(deck_list, list) or not deck_list:
+            error = self.build_error(
+                "deck_list must contain at least one card.",
+                ERR_ILLEGAL_DECK,
+                pdu
+            )
+            client.send(error)
+            return False
+
+        if len(deck_list) > 51:
+            error = self.build_error(
+                MSG_DECK_TOO_LARGE.format(count=len(deck_list)),
+                ERR_ILLEGAL_DECK,
+                pdu
+            )
             client.send(error)
             return False
 
@@ -83,6 +111,7 @@ class PduDispatcher:
             return False
 
         client.pid = player_id 
+        client.deck_list = list(deck_list)
         client.seq_num = self.server.seq_num + 1 
         self.server.clients.append(client)
 
@@ -94,7 +123,113 @@ class PduDispatcher:
         return True
 
     def handle_mulligan_choice(self, client, pdu):
-        pass
+        import random
+        from collections import Counter
+
+        def send_mulligan_state():
+            self.send_game_state_update(
+                client,
+                self.server.state_builder.build_mulligan_state(client)
+            )
+
+        required_state = (
+            "hand",
+            "library"
+        )
+        if any(not hasattr(client, field) for field in required_state):
+            error = self.build_error(
+                "The mulligan phase has not been initialized.",
+                ERR_ILLEGAL_ACTION,
+                pdu
+            )
+            client.send(error)
+            return False
+
+        if client.mulligan_kept:
+            error = self.build_error(
+                "This player has already kept a hand.",
+                ERR_ILLEGAL_ACTION,
+                pdu
+            )
+            client.send(error)
+            return False
+
+        if pdu.get("seq_num") != client.seq_num:
+            error = self.build_error(
+                MSG_MULLIGAN_STALE,
+                ERR_STALE_ACTION,
+                pdu
+            )
+            client.send(error)
+            return False
+
+        # ERROR HANDLINGGG
+        keep = pdu.get("keep")
+        cards_to_bottom = pdu.get("cards_to_bottom")
+        if not isinstance(keep, bool) or not isinstance(cards_to_bottom, list):
+            error = self.build_error(
+                "MULLIGAN_CHOICE requires a boolean keep and a cards_to_bottom list.",
+                ERR_ILLEGAL_ACTION,
+                pdu
+            )
+            client.send(error)
+            return False
+
+        if not all(isinstance(card_id, str) for card_id in cards_to_bottom):
+            error = self.build_error(
+                "cards_to_bottom must contain card IDs.",
+                ERR_ILLEGAL_ACTION,
+                pdu
+            )
+            client.send(error)
+            return False
+
+        if not keep:
+            if cards_to_bottom:
+                error = self.build_error(
+                    "Only bottom cards when keeping a hand.",
+                    ERR_ILLEGAL_ACTION,
+                    pdu
+                )
+                client.send(error)
+                return False
+
+            deck = list(client.library) + list(client.hand)
+            random.shuffle(deck)
+            client.hand = deck[:7]
+            client.library = deck[7:]
+            client.mulligan_taken += 1
+            send_mulligan_state()
+            return True
+
+        if len(cards_to_bottom) != client.mulligan_taken:
+            error = self.build_error(
+                MSG_MULLIGAN_WRONG_BOTTOM_COUNT.format(
+                    count=client.mulligan_taken
+                ),
+                ERR_ILLEGAL_ACTION,
+                pdu
+            )
+            client.send(error)
+            return False
+
+        if Counter(cards_to_bottom) - Counter(client.hand):
+            error = self.build_error(
+                MSG_MULLIGAN_CARD_NOT_IN_HAND,
+                ERR_ILLEGAL_ACTION,
+                pdu
+            )
+            client.send(error)
+            return False
+        # ENDS HERE
+
+        for card_id in cards_to_bottom:
+            client.hand.remove(card_id)
+            client.library.append(card_id)
+
+        client.mulligan_kept = True
+        send_mulligan_state()
+        return True
 
     def handle_priority_pass(self, client, pdu):
         pass
@@ -134,39 +269,169 @@ class PduDispatcher:
 
     #SEND PDUS
     def send_game_state_update(self, client, state):
-        client.send({
-            "type": "GAME_STATE_UPDATE",
-            "seq_num": client.seq_num + 1,
-            "state": state
-        })
-        pass
+        return self._send(client, "GAME_STATE_UPDATE", state=state)
 
-    def send_phase_transition(self, client):
-        pass
+    def send_phase_transition(
+        self,
+        client,
+        from_phase,
+        to_phase,
+        active_player,
+        turn
+    ):
+        return self._send(
+            client,
+            "PHASE_TRANSITION",
+            from_phase=from_phase,
+            to_phase=to_phase,
+            active_player=active_player,
+            turn=turn
+        )
 
-    def send_priority_grant(self, client):
-        pass
+    def send_priority_grant(self, client, player_id, time_limit_ms=60000):
+        return self._send(
+            client,
+            "PRIORITY_GRANT",
+            player_id=player_id,
+            time_limit_ms=time_limit_ms
+        )
 
-    def send_stack_push(self, client):
-        pass
+    def send_stack_push(
+        self,
+        client,
+        stack_item_id,
+        item_type,
+        source,
+        controller,
+        targets=None
+    ):
+        return self._send(
+            client,
+            "STACK_PUSH",
+            stack_item_id=stack_item_id,
+            item_type=item_type,
+            source=source,
+            targets=list(targets or []),
+            controller=controller
+        )
 
-    def send_trigger_order(self, client):
-        pass
+    def send_trigger_order(self, client, player_id, trigger_ids):
+        return self._send(
+            client,
+            "TRIGGER_ORDER",
+            player_id=player_id,
+            trigger_ids=list(trigger_ids)
+        )
 
-    def send_trigger_choice(self, client):
-        pass
+    def send_trigger_choice(
+        self,
+        client,
+        trigger_id,
+        source_id,
+        effect_summary,
+        requires_target=False,
+        legal_targets=None
+    ):
+        return self._send(
+            client,
+            "TRIGGER_CHOICE",
+            trigger_id=trigger_id,
+            source_id=source_id,
+            effect_summary=effect_summary,
+            requires_target=requires_target,
+            legal_targets=list(legal_targets or [])
+        )
 
-    def send_stack_resolve(self, client):
-        pass
+    def send_stack_resolve(
+        self,
+        client,
+        stack_item_id,
+        result,
+        state_changes=None
+    ):
+        return self._send(
+            client,
+            "STACK_RESOLVE",
+            stack_item_id=stack_item_id,
+            result=result,
+            state_changes=list(state_changes or [])
+        )
 
-    def send_combat_damage_result(self, client):
-        pass
+    def send_combat_damage_result(
+        self,
+        client,
+        damage_events,
+        life_totals,
+        creatures_died=None,
+        game_over_result=None
+    ):
+        payload = {
+            "damage_events": list(damage_events),
+            "life_totals": dict(life_totals),
+            "creatures_died": list(creatures_died or [])
+        }
+        if game_over_result is not None:
+            payload["game_over_result"] = game_over_result
+        return self._send(client, "COMBAT_DAMAGE_RESULT", **payload)
 
-    def send_game_over(self, client):
-        pass
+    def send_game_over(self, client, winner_id, loser_id, reason):
+        return self._send(
+            client,
+            "GAME_OVER",
+            winner_id=winner_id,
+            loser_id=loser_id,
+            reason=reason
+        )
 
-    def send_error(self, client):
-        pass
+    def send_error(self, client, code, message, rejected_action):
+        rejected_seq_num = rejected_action.get("seq_num")
+        seq_num = (
+            rejected_seq_num
+            if isinstance(rejected_seq_num, int)
+            else self._next_seq_num()
+        )
+        return self._send(
+            client,
+            "ERROR",
+            seq_num=seq_num,
+            update_client_seq=False,
+            code=code,
+            message=message,
+            rejected_action=rejected_action
+        )
 
-    def send_pong(self, client):
-        pass
+    def send_pong(self, client, ping):
+        return self._send(
+            client,
+            "PONG",
+            seq_num=ping.get("seq_num", 0),
+            update_client_seq=False,
+            timestamp=ping.get("timestamp")
+        )
+
+    def _next_seq_num(self):
+        self.server.seq_num += 1
+        return self.server.seq_num
+
+    def _send(
+        self,
+        client,
+        pdu_type,
+        seq_num=None,
+        update_client_seq=True,
+        **payload
+    ):
+        if seq_num is None:
+            seq_num = self._next_seq_num()
+
+        pdu = {
+            "type": pdu_type,
+            "seq_num": seq_num,
+            **payload
+        }
+        client.send(pdu)
+
+        if update_client_seq:
+            client.seq_num = seq_num
+
+        return pdu

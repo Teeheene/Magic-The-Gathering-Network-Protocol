@@ -13,6 +13,7 @@ class ClientConnection:
         self.verbose = verbose
         self.sock = None
         self.running = False
+        self.pdu_handler = None
 
     def connect(self):
         #initialize connections
@@ -36,6 +37,8 @@ class ClientConnection:
         while self.running:
             try:
                 pdu = self.receive()
+                if self.pdu_handler is not None:
+                    self.pdu_handler(pdu)
             except ConnectionError:
                 print("Server Disconnected.")
                 self.running = False

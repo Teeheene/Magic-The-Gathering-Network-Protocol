@@ -6,6 +6,9 @@ class ConnectedClient:
         self.address = address
         self.pid = None
 
+        self.mulligan_taken = 0
+        self.mulligan_kept = False
+
     def send(self, pdu):
         self.sock.sendall(
             encode_pdu(pdu)
