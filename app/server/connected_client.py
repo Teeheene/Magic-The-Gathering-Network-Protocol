@@ -1,11 +1,10 @@
 from app.shared.protocol import encode_pdu, decode_pdu
 
 class ConnectedClient:
-    def __init__(self, sock, address, username):
+    def __init__(self, sock, address):
         self.sock = sock
         self.address = address
-        self.username = username
-        self.player_id = None
+        self.pid = None
 
     def send(self, pdu):
         self.sock.sendall(
