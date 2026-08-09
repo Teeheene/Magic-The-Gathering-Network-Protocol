@@ -35,12 +35,25 @@ GAME_PHASES = (
     NOTE: These states appear inside of GAME_STATE_UPDATE
 """
 
+def _clean_stack(stack):
+    cleaned = []
+    for item in stack:
+        if isinstance(item, dict):
+            cleaned.append({k: v for k, v in item.items() if k != "effect_fn"})
+        else:
+            cleaned.append(item)
+    return cleaned
+
+
 class StateBuilder:
     def __init__(self, server):
         self.server = server
 
     def build_lobby_state(self):
-        players_ready = len(self.server.clients)
+        players_ready = sum(
+            1 for c in self.server.clients
+            if getattr(c, "ready_in_lobby", False)
+        )
         waiting_for = [
             f"player_{player_number}"
             for player_number in range(players_ready + 1, self.server.max_clients + 1)
@@ -51,6 +64,7 @@ class StateBuilder:
             "players_ready": players_ready,
             "waiting_for": waiting_for
         }
+
 
     def build_mulligan_state(
         self,
@@ -69,7 +83,10 @@ class StateBuilder:
         if getattr(self.server, "active_player", None) not in {
             client.pid for client in clients
         }:
-            self.server.active_player = rng.choice(clients).pid
+            self.server.active_player = rng.choice([
+                client.pid for client in clients
+            ])
+
         if not hasattr(self.server, "stack"):
             self.server.stack = []
         for client in clients:
@@ -88,10 +105,12 @@ class StateBuilder:
                 client.graveyard = []
 
         opponents = [c for c in clients if c.pid != viewing_client.pid]
+
         return {
             "turn": self.server.turn,
             "phase": self.server.phase,
             "active_player": self.server.active_player,
+            "priority_holder": None,
             "life_totals": {
                 client.pid: client.life_total
                 for client in clients
@@ -112,7 +131,7 @@ class StateBuilder:
                 client.pid: list(client.graveyard)
                 for client in clients
             },
-            "stack": list(self.server.stack),
+            "stack": _clean_stack(self.server.stack),
         }
 
     def build_untap_state(self, viewing_client):
@@ -150,7 +169,7 @@ class StateBuilder:
                 client.pid: list(client.graveyard)
                 for client in clients
             },
-            "stack": list(self.server.stack),
+            "stack": _clean_stack(self.server.stack),
         }
 
     def build_game_state(self, viewing_client):
@@ -190,7 +209,7 @@ class StateBuilder:
                 client.pid: list(client.graveyard)
                 for client in clients
             },
-            "stack": list(getattr(self.server, "stack", [])),
+            "stack": _clean_stack(getattr(self.server, "stack", [])),
             "attackers": list(getattr(self.server, "attackers", [])),
             "blockers": list(getattr(self.server, "blockers", [])),
 

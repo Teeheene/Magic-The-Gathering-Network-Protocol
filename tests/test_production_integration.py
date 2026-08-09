@@ -8,6 +8,7 @@ from app.client.state import ClientState
 from app.server.connected_client import ConnectedClient
 from app.server.game import Game, CATALOG_PATH
 from app.shared.card_catalog import CardCatalog
+from app.server.engine.triggers import GameEvent
 
 
 class TestProductionIntegration(unittest.TestCase):
@@ -72,6 +73,21 @@ class TestProductionIntegration(unittest.TestCase):
         # Duplicate instance in deck invalid
         dup_deck = ["mountain_001", "mountain_001"]
         self.assertFalse(catalog.is_valid_deck(dup_deck))
+
+    def test_duplicate_instance_deck_rejection_server_pdu(self):
+        """Req 5: Server rejects PLAYER_READY with duplicate physical instance IDs."""
+        c1 = self.create_mock_client("alice", 1001)
+        self.mock_connection.clients = [c1]
+        self.game.clients = [c1]
+
+        res = self.dispatcher.handle_player_ready(c1, {
+            "type": "PLAYER_READY",
+            "seq_num": 1,
+            "player_id": "alice",
+            "deck_list": ["mountain_001", "mountain_001"]  # Duplicate instance ID!
+        })
+        self.assertFalse(res)
+        c1.sock.sendall.assert_called()
 
     def test_game_state_update_schema(self):
         """Req 6: hand is flat list for viewer; hand_counts is opponent count only."""
@@ -147,6 +163,197 @@ class TestProductionIntegration(unittest.TestCase):
         self.assertFalse(res)
         c1.sock.sendall.assert_called()
 
+    def test_combat_land_attacker_and_blocker_rejection(self):
+        """Req 6: Reject lands or noncreatures as attackers or blockers."""
+        c1 = self.create_mock_client("alice", 1001)
+        c1.battlefield = [{"id": "mountain_001", "tapped": False}]
+
+        c2 = self.create_mock_client("bob", 1002)
+        c2.battlefield = [{"id": "forest_001", "tapped": False}]
+
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+        self.game.active_player = "alice"
+        self.game.phase = "DECLARE_ATTACKERS"
+
+        # Alice tries to attack with mountain_001
+        res1 = self.dispatcher.handle_declare_attackers(c1, {
+            "type": "DECLARE_ATTACKERS",
+            "seq_num": 10,
+            "attackers": [{"creature_id": "mountain_001", "target": "bob"}]
+        })
+        self.assertFalse(res1)
+
+        # Bob tries to block with forest_001
+        self.game.phase = "DECLARE_BLOCKERS"
+        self.game.attackers = [{"creature_id": "grizzly_bears_001", "target": "bob"}]
+        res2 = self.dispatcher.handle_declare_blockers(c2, {
+            "type": "DECLARE_BLOCKERS",
+            "seq_num": 10,
+            "blockers": [{"creature_id": "forest_001", "blocking_id": "grizzly_bears_001"}]
+        })
+        self.assertFalse(res2)
+
+    def test_lightning_bolt_stack_push_and_resolve(self):
+        """Req 1: Push Lightning Bolt, resolve, verify Bob loses 3 life, card to graveyard, STACK_RESOLVE sent."""
+        c1 = self.create_mock_client("alice", 1001)
+        c2 = self.create_mock_client("bob", 1002)
+
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+        self.game.active_player = "alice"
+        self.game.priority_holder = "alice"
+
+        # Push Lightning Bolt targeting Bob
+        stack_item = {
+            "stack_item_id": 1,
+            "item_type": "SPELL",
+            "source": "lightning_bolt_001",
+            "controller": "alice",
+            "targets": ["bob"]
+        }
+        self.game.stack.append(stack_item)
+
+        # Resolve top stack item
+        self.game.resolve_top_stack_item()
+
+        self.assertEqual(c2.life_total, 17)
+        self.assertIn("lightning_bolt_001", c1.graveyard)
+        c1.sock.sendall.assert_called()
+        c2.sock.sendall.assert_called()
+
+    def test_real_trigger_orchestration_goblin_guide(self):
+        """Req 2: Goblin Guide attack trigger reveals defending player top card."""
+        c1 = self.create_mock_client("alice", 1001)
+        c1.battlefield = [{"id": "goblin_guide_001", "tapped": False, "summoning_sick": False, "keywords": ["haste"]}]
+
+        c2 = self.create_mock_client("bob", 1002)
+        c2.library = ["mountain_002"]  # Top card is a land
+
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+        self.game.active_player = "alice"
+        self.game.priority_holder = "alice"
+        self.game.phase = "DECLARE_ATTACKERS"
+
+        res = self.dispatcher.handle_declare_attackers(c1, {
+            "type": "DECLARE_ATTACKERS",
+            "seq_num": 10,
+            "attackers": [{"creature_id": "goblin_guide_001", "target": "bob"}]
+        })
+        self.assertTrue(res)
+
+        # Trigger pushed onto stack
+        self.assertEqual(len(self.game.stack), 1)
+        self.assertEqual(self.game.stack[0]["item_type"], "TRIGGER_ABILITY")
+
+        # Resolve Goblin Guide trigger
+        self.game.resolve_top_stack_item()
+        self.assertIn("mountain_002", c2.hand)  # Land revealed and put into Bob's hand
+
+    def test_real_trigger_orchestration_phantasmal_bear(self):
+        """Req 2: Phantasmal Bear becomes target of spell -> trigger sacrifices it."""
+        c1 = self.create_mock_client("alice", 1001)
+        c1.hand = ["lightning_bolt_001"]
+        c1.battlefield = [{"id": "mountain_001", "tapped": False}]
+
+        c2 = self.create_mock_client("bob", 1002)
+        c2.battlefield = [{"id": "phantasmal_bear_001", "tapped": False}]
+
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+        self.game.active_player = "alice"
+        self.game.priority_holder = "alice"
+        self.game.phase = "PRECOMBAT_MAIN"
+
+        # Alice casts Lightning Bolt targeting Phantasmal Bear
+        res = self.dispatcher.handle_cast_spell(c1, {
+            "type": "CAST_SPELL",
+            "seq_num": 10,
+            "card_id": "lightning_bolt_001",
+            "targets": ["phantasmal_bear_001"],
+            "mana_payment": {"R": 1}
+        })
+        self.assertTrue(res)
+
+        # Bear trigger pushed onto stack
+        self.assertEqual(len(self.game.stack), 2)  # Spell + Bear trigger
+        self.assertEqual(self.game.stack[-1]["item_type"], "TRIGGER_ABILITY")
+
+        # Resolve Bear trigger -> Bear sacrificed to graveyard
+        self.game.resolve_top_stack_item()
+        self.assertNotIn("phantasmal_bear_001", [p["id"] for p in c2.battlefield])
+        self.assertIn("phantasmal_bear_001", c2.graveyard)
+
+    def test_real_trigger_orchestration_swiftspear_prowess(self):
+        """Req 2: Monastery Swiftspear gains +1/+1 prowess buff on noncreature spell cast."""
+        c1 = self.create_mock_client("alice", 1001)
+        c1.hand = ["lightning_bolt_001"]
+        c1.battlefield = [
+            {"id": "mountain_001", "tapped": False},
+            {"id": "monastery_swiftspear_001", "tapped": False, "power": 1, "toughness": 2, "temp_power_buff": 0, "temp_toughness_buff": 0}
+        ]
+
+        c2 = self.create_mock_client("bob", 1002)
+
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+        self.game.active_player = "alice"
+        self.game.priority_holder = "alice"
+        self.game.phase = "PRECOMBAT_MAIN"
+
+        res = self.dispatcher.handle_cast_spell(c1, {
+            "type": "CAST_SPELL",
+            "seq_num": 10,
+            "card_id": "lightning_bolt_001",
+            "targets": ["bob"],
+            "mana_payment": {"R": 1}
+        })
+        self.assertTrue(res)
+
+
+        # Prowess trigger pushed onto stack
+        self.assertEqual(self.game.stack[-1]["item_type"], "TRIGGER_ABILITY")
+
+        # Resolve Prowess trigger
+        self.game.resolve_top_stack_item()
+        swiftspear = next(p for p in c1.battlefield if p.get("id") == "monastery_swiftspear_001")
+        self.assertEqual(swiftspear["temp_power_buff"], 1)
+        self.assertEqual(swiftspear["temp_toughness_buff"], 1)
+
+
+    def test_real_trigger_orchestration_gray_merchant(self):
+        """Req 2: Gray Merchant ETB trigger drains opponent life by devotion to black."""
+        c1 = self.create_mock_client("alice", 1001)
+        c1.hand = ["gray_merchant_001"]
+        c1.battlefield = [{"id": "swamp_001", "tapped": False}]
+
+        c2 = self.create_mock_client("bob", 1002)
+
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+        self.game.active_player = "alice"
+        self.game.priority_holder = "alice"
+        self.game.phase = "PRECOMBAT_MAIN"
+
+        # Cast Gray Merchant (requires 5 mana, override cost check or set mana)
+        self.game.stack.append({
+            "stack_item_id": 1,
+            "item_type": "SPELL",
+            "source": "gray_merchant_001",
+            "controller": "alice",
+            "targets": []
+        })
+
+        # Resolve spell -> Gray Merchant enters battlefield -> ETB trigger detected & pushed
+        self.game.resolve_top_stack_item()
+        self.assertEqual(self.game.stack[-1]["item_type"], "TRIGGER_ABILITY")
+
+        # Resolve ETB trigger (devotion to B from Gray Merchant mana cost is 2)
+        self.game.resolve_top_stack_item()
+        self.assertEqual(c2.life_total, 18)
+        self.assertEqual(c1.life_total, 22)
+
     def test_priority_pass_twice_from_upkeep_to_draw(self):
         """Req 11: Priority pass twice from UPKEEP advances phase to DRAW."""
         c1 = self.create_mock_client("alice", 1001)
@@ -214,7 +421,6 @@ class TestProductionIntegration(unittest.TestCase):
         self.assertEqual(self.game.active_player, "bob")
         self.assertEqual(self.game.phase, "UPKEEP")
 
-
     def test_multiword_card_id_normalization(self):
         """Req 7: Verify base_card_id handles multiword card instance IDs cleanly."""
         catalog = CardCatalog(CATALOG_PATH)
@@ -224,7 +430,6 @@ class TestProductionIntegration(unittest.TestCase):
         card_data = catalog.get_card_data("searing_spear_001")
         self.assertIsNotNone(card_data)
         self.assertEqual(card_data.get("name"), "Searing Spear")
-
 
     def test_heartbeat_pong_matching_and_timeout(self):
         """Req 9: Local heartbeat timing, pending_ping_seq, and last_pong_timestamp correlation."""
@@ -260,6 +465,45 @@ class TestProductionIntegration(unittest.TestCase):
 
         self.game.resolve_combat_damage(first_strike=False)
         self.assertEqual(blocker["damage"], 5)  # Single blocker received ALL 5 damage
+
+    def test_end_to_end_cast_pass_resolve_state(self):
+        """Req 11: End-to-end flow: cast spell -> priority pass -> stack resolution -> state update."""
+        c1 = self.create_mock_client("alice", 1001)
+        c1.hand = ["lightning_bolt_001"]
+        c1.battlefield = [{"id": "mountain_001", "tapped": False}]
+
+        c2 = self.create_mock_client("bob", 1002)
+
+
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+        self.game.active_player = "alice"
+        self.game.priority_holder = "alice"
+        self.game.phase = "PRECOMBAT_MAIN"
+
+        # 1. Alice casts Lightning Bolt
+        res1 = self.dispatcher.handle_cast_spell(c1, {
+            "type": "CAST_SPELL",
+            "seq_num": 10,
+            "card_id": "lightning_bolt_001",
+            "targets": ["bob"],
+            "mana_payment": {"R": 1}
+        })
+        self.assertTrue(res1)
+        self.assertEqual(len(self.game.stack), 1)
+
+        # 2. Priority granted to Alice -> Alice passes priority
+        res2 = self.dispatcher.handle_priority_pass(c1, {"type": "PRIORITY_PASS", "seq_num": c1.active_priority_seq_num})
+        self.assertTrue(res2)
+        self.assertEqual(self.game.priority_holder, "bob")
+
+        # 3. Bob passes priority -> Stack resolves
+        res3 = self.dispatcher.handle_priority_pass(c2, {"type": "PRIORITY_PASS", "seq_num": c2.active_priority_seq_num})
+        self.assertTrue(res3)
+
+        # 4. Stack is empty, Bob life total is 17
+        self.assertEqual(len(self.game.stack), 0)
+        self.assertEqual(c2.life_total, 17)
 
 
 if __name__ == "__main__":

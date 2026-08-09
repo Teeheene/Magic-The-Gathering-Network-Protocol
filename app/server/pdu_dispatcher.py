@@ -166,42 +166,36 @@ class PduDispatcher:
         deck_list = pdu.get("deck_list")
 
         if not player_id or player_id == "":
-            error = self.build_error(
+            return self.send_error(
+                client,
                 MSG_EMPTY_PLAYER_ID,
                 ERR_ILLEGAL_ACTION,
-                pdu)
-            client.send(error)
-            return False
+                pdu
+            )
 
         if not isinstance(deck_list, list) or not deck_list:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "deck_list must contain at least one card.",
                 ERR_ILLEGAL_DECK,
                 pdu
             )
-            client.send(error)
-            return False
 
         if len(deck_list) > 50:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 MSG_DECK_TOO_LARGE.format(count=len(deck_list)),
                 ERR_ILLEGAL_DECK,
                 pdu
             )
-            client.send(error)
-            return False
 
-        if any(
-            not self.server.card_catalog.is_valid_instance_id(card_id)
-            for card_id in deck_list
-        ):
-            error = self.build_error(
-                "deck_list contains invalid or unauthorized card IDs.",
+        if not self.server.card_catalog.is_valid_deck(deck_list):
+            return self.send_error(
+                client,
+                "deck_list contains invalid card IDs or duplicate physical instances.",
                 ERR_ILLEGAL_DECK,
                 pdu
             )
-            client.send(error)
-            return False
 
         if isinstance(player_id, str) and any(
             existing_client is not client
@@ -209,20 +203,19 @@ class PduDispatcher:
             and existing_client.pid.casefold() == player_id.casefold()
             for existing_client in self.server.clients
         ):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 MSG_DUPLICATE_ID,
                 ERR_DUPLICATE_ID,
                 pdu
             )
-            client.send(error)
-            return False
 
         client.pid = player_id 
         client.deck_list = list(deck_list)
+        client.ready_in_lobby = True
         client.seq_num = self.server.seq_num + 1 
         if client not in self.server.clients:
             self.server.clients.append(client)
-
 
         print(
             f"{client.pid} accepted. "
@@ -231,39 +224,37 @@ class PduDispatcher:
 
         return True
 
+
     def handle_mulligan_choice(self, client, pdu):
-        # ERROR HANDLINGGG
         required_state = (
             "hand",
             "library"
         )
         if any(not hasattr(client, field) for field in required_state):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "The mulligan phase has not been initialized.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
 
         if client.mulligan_kept:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "This player has already kept a hand.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
 
-        if pdu.get("seq_num") != client.seq_num:
-            error = self.build_error(
+        expected_seq = getattr(client, "active_mulligan_seq_num", None)
+        if expected_seq is not None and pdu.get("seq_num") != expected_seq:
+            return self.send_error(
+                client,
                 MSG_MULLIGAN_STALE,
                 ERR_STALE_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
-        # ENDS HERE
+
 
         keep = pdu.get("keep")
         cards_to_bottom = pdu.get("cards_to_bottom")
@@ -413,26 +404,24 @@ class PduDispatcher:
         expected_payment = self.server.card_mana_cost(card_id)
         declared_payment = self.server.normalize_mana_payment(mana_payment)
         if expected_payment is None or declared_payment != expected_payment:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "mana_payment must match the spell's mana cost.",
                 ERR_INSUFFICIENT_MANA,
                 pdu
             )
-            client.send(error)
-            return False
 
         mana_sources = self.server.select_mana_sources(
             client,
             declared_payment,
         )
         if mana_sources is None:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "You do not control enough untapped mana sources.",
                 ERR_INSUFFICIENT_MANA,
                 pdu
             )
-            client.send(error)
-            return False
 
         stack_item_id = self._next_stack_item_id()
         stack_item = {
@@ -448,6 +437,11 @@ class PduDispatcher:
         self.server.stack.append(stack_item)
         self.server.consecutive_priority_passes = 0
 
+        from app.server.engine.triggers import GameEvent
+        self.server.post_event(GameEvent("spell_cast", {"card_id": card_id, "controller": client.pid, "targets": targets}))
+        for target in targets:
+            self.server.post_event(GameEvent("became_target", {"target": target, "target_id": target, "source": card_id, "controller": client.pid}))
+
         for viewing_client in self.server.clients:
             self.send_stack_push(
                 viewing_client,
@@ -460,6 +454,7 @@ class PduDispatcher:
         self._broadcast_game_state()
         self.send_priority_grant(client, client.pid)
         return True
+
 
     def handle_activate_ability(self, client, pdu):
         if not self._validate_priority_action(client, pdu):
@@ -593,8 +588,9 @@ class PduDispatcher:
         return True
 
     def handle_trigger_order_response(self, client, pdu):
-        if not self._validate_seq_num(client, pdu, "TRIGGER_ORDER"):
-            return False
+        expected_seq = getattr(client, "active_trigger_seq_num", None)
+        if expected_seq is not None and pdu.get("seq_num") != expected_seq:
+            return self.send_error(client, "seq_num does not match active trigger token.", ERR_STALE_ACTION, pdu)
 
         ordered_trigger_ids = pdu.get("ordered_trigger_ids")
         pending_trigger_ids = getattr(client, "pending_trigger_ids", None)
@@ -602,78 +598,63 @@ class PduDispatcher:
             isinstance(trigger_id, str)
             for trigger_id in ordered_trigger_ids
         ):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "ordered_trigger_ids must be a list of trigger IDs.",
-                ERR_ILLEGAL_ACTION,
+                ERR_TRIGGER_ORDER_INVALID,
                 pdu
             )
-            client.send(error)
-            return False
-        if pending_trigger_ids is None:
-            error = self.build_error(
-                "No trigger order is pending.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
-        if Counter(ordered_trigger_ids) != Counter(pending_trigger_ids):
-            error = self.build_error(
+        if pending_trigger_ids is None or Counter(ordered_trigger_ids) != Counter(pending_trigger_ids):
+            return self.send_error(
+                client,
                 "The response must order every pending trigger exactly once.",
-                ERR_ILLEGAL_ACTION,
+                ERR_TRIGGER_ORDER_INVALID,
                 pdu
             )
-            client.send(error)
-            return False
 
         client.pending_trigger_ids = None
-        self.server.ordered_trigger_ids = list(ordered_trigger_ids)
-        self._broadcast_game_state()
-        return True
+        trg_map = {trg.trigger_id: trg for trg in self.server.trigger_manager.pending_triggers}
+        reordered = [trg_map[tid] for tid in ordered_trigger_ids if tid in trg_map]
+        self.server.trigger_manager.pending_triggers = reordered
+        return self.server.post_event()
 
     def handle_trigger_choice_response(self, client, pdu):
-        if not self._validate_seq_num(client, pdu, "TRIGGER_CHOICE"):
-            return False
+        expected_seq = getattr(client, "active_trigger_seq_num", None)
+        if expected_seq is not None and pdu.get("seq_num") != expected_seq:
+            return self.send_error(client, "seq_num does not match active trigger token.", ERR_STALE_ACTION, pdu)
 
         pending = getattr(client, "pending_trigger_choice", None)
         trigger_id = pdu.get("trigger_id")
         accept = pdu.get("accept")
         chosen_target = pdu.get("chosen_target")
-        if pending is None:
-            error = self.build_error(
-                "No trigger choice is pending.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
-        if trigger_id != pending["trigger_id"] or not isinstance(accept, bool):
-            error = self.build_error(
-                "Invalid trigger choice response.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
-        if accept and pending["requires_target"]:
-            if chosen_target not in pending["legal_targets"]:
-                error = self.build_error(
-                    "The chosen target is not legal.",
-                    ERR_ILLEGAL_ACTION,
-                    pdu
-                )
-                client.send(error)
-                return False
+        if pending is None or trigger_id != pending.get("trigger_id") or not isinstance(accept, bool):
+            return self.send_error(client, "Invalid trigger choice response.", ERR_TRIGGER_CHOICE_INVALID, pdu)
+        if accept and pending.get("requires_target"):
+            if chosen_target not in pending.get("legal_targets", []):
+                return self.send_error(client, "The chosen target is not legal.", ERR_ILLEGAL_TARGET, pdu)
 
         client.pending_trigger_choice = None
-        self.server.last_trigger_choice = {
-            "player_id": client.pid,
-            "trigger_id": trigger_id,
-            "accept": accept,
-            "chosen_target": chosen_target
-        }
-        self._broadcast_game_state()
-        return True
+        pending_trgs = self.server.trigger_manager.pending_triggers
+        match_trg = next((t for t in pending_trgs if t.trigger_id == trigger_id), None)
+        if match_trg:
+            pending_trgs.remove(match_trg)
+            if accept:
+                stack_item = {
+                    "stack_item_id": self._next_stack_item_id(),
+                    "item_type": "TRIGGER_ABILITY",
+                    "trigger_id": match_trg.trigger_id,
+                    "source": match_trg.source_id,
+                    "controller": match_trg.controller,
+                    "target": chosen_target,
+                    "targets": [chosen_target] if chosen_target else [],
+                    "effect_summary": match_trg.effect_summary,
+                    "effect_fn": match_trg.effect_fn
+                }
+                self.server.stack.append(stack_item)
+                self.broadcast_stack_push(stack_item)
+
+        return self.server.post_event()
+
 
     def handle_declare_attackers(self, client, pdu):
         if getattr(self.server, "phase", None) != "DECLARE_ATTACKERS":
@@ -712,35 +693,24 @@ class PduDispatcher:
 
         creature_ids = [attacker["creature_id"] for attacker in attackers]
         if len(creature_ids) != len(set(creature_ids)):
-            error = self.build_error(
-                "A creature cannot attack twice.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "A creature cannot attack twice.", ERR_ILLEGAL_ACTION, pdu)
+
         battlefield_ids = self._zone_card_ids(client.battlefield)
         if any(creature_id not in battlefield_ids for creature_id in creature_ids):
-            error = self.build_error(
-                "Every attacker must be on your battlefield.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "Every attacker must be on your battlefield.", ERR_ILLEGAL_ACTION, pdu)
+
+        # Enforce that every attacker is a Creature
+        for creature_id in creature_ids:
+            card_data = self.server.card_data(creature_id) or {}
+            if "creature" not in card_data.get("card_type", "").casefold():
+                return self.send_error(client, f"{creature_id} is not a Creature and cannot attack.", ERR_ILLEGAL_ACTION, pdu)
 
         opponent = self.server.other_client(client)
         if opponent is None or any(
             attacker["target"] != opponent.pid
             for attacker in attackers
         ):
-            error = self.build_error(
-                "Every attacker must target the opposing player.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "Every attacker must target the opposing player.", ERR_ILLEGAL_ACTION, pdu)
 
         attacking_permanents = []
         for creature_id in creature_ids:
@@ -751,28 +721,26 @@ class PduDispatcher:
                     for keyword in permanent.get("keywords", [])
                 }
                 if "defender" in keywords:
-                    error = self.build_error(
-                        "Creatures with Defender cannot attack.",
-                        ERR_ILLEGAL_ACTION,
-                        pdu
-                    )
-                    client.send(error)
-                    return False
+                    return self.send_error(client, "Creatures with Defender cannot attack.", ERR_ILLEGAL_ACTION, pdu)
                 if permanent.get("tapped") or (
                     permanent.get("summoning_sick")
                     and "haste" not in keywords
                 ):
-                    error = self.build_error(
-                        "Tapped or summoning-sick creatures cannot attack.",
-                        ERR_ILLEGAL_ACTION,
-                        pdu
-                    )
-                    client.send(error)
-                    return False
+                    return self.send_error(client, "Tapped or summoning-sick creatures cannot attack.", ERR_ILLEGAL_ACTION, pdu)
             attacking_permanents.append(permanent)
 
         self.server.attackers = list(attackers)
         self.server.attackers_declared = True
+
+        from app.server.engine.triggers import GameEvent
+        for att in attackers:
+            self.server.post_event(GameEvent("attacker_declared", {
+                "attacker_id": att["creature_id"],
+                "creature_id": att["creature_id"],
+                "target": att["target"],
+                "controller": client.pid
+            }))
+
         for permanent in attacking_permanents:
             if isinstance(permanent, dict):
                 keywords = {
@@ -783,6 +751,7 @@ class PduDispatcher:
                     permanent["tapped"] = True
         self._broadcast_game_state()
         return self.server.after_attackers_declared()
+
 
 
     def handle_declare_blockers(self, client, pdu):
@@ -826,34 +795,23 @@ class PduDispatcher:
             for attacker in getattr(self.server, "attackers", [])
         }
         if len(blocker_ids) != len(set(blocker_ids)):
-            error = self.build_error(
-                "A creature cannot block twice.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "A creature cannot block twice.", ERR_ILLEGAL_ACTION, pdu)
+
         if any(
             blocker_id not in self._zone_card_ids(client.battlefield)
             for blocker_id in blocker_ids
         ):
-            error = self.build_error(
-                "Every blocker must be on your battlefield.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "Every blocker must be on your battlefield.", ERR_ILLEGAL_ACTION, pdu)
+
+        # Enforce that every blocker is a Creature
         for blocker_id in blocker_ids:
+            card_data = self.server.card_data(blocker_id) or {}
+            if "creature" not in card_data.get("card_type", "").casefold():
+                return self.send_error(client, f"{blocker_id} is not a Creature and cannot block.", ERR_ILLEGAL_ACTION, pdu)
             _, permanent = self.server.find_permanent(blocker_id)
             if isinstance(permanent, dict) and permanent.get("tapped"):
-                error = self.build_error(
-                    "Tapped creatures cannot block.",
-                    ERR_ILLEGAL_ACTION,
-                    pdu
-                )
-                client.send(error)
-                return False
+                return self.send_error(client, "Tapped creatures cannot block.", ERR_ILLEGAL_ACTION, pdu)
+
         for blocker in blockers:
             blocker_id = blocker["creature_id"]
             blocking_id = blocker["blocking_id"]
@@ -1038,51 +996,54 @@ class PduDispatcher:
 
 
     def handle_discard(self, client, pdu):
-        if not self._validate_seq_num(client, pdu, "GAME_STATE_UPDATE"):
-            return False
+        expected_seq = getattr(client, "active_cleanup_seq_num", None)
+        if expected_seq is not None and pdu.get("seq_num") != expected_seq:
+            return self.send_error(
+                client,
+                "seq_num does not match the active CLEANUP token.",
+                ERR_STALE_ACTION,
+                pdu
+            )
 
         if (
             self.server.phase != "CLEANUP"
             or client.pid != self.server.active_player
             or len(client.hand) <= 7
         ):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "DISCARD is only requested from the active player at cleanup.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
 
         card_ids = pdu.get("card_ids")
         if not isinstance(card_ids, list) or not all(
             isinstance(card_id, str)
             for card_id in card_ids
         ):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "card_ids must be a list of card IDs.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
         required_discards = len(client.hand) - 7
         if len(card_ids) != required_discards:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 f"Discard exactly {required_discards} card(s).",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
         if Counter(card_ids) - Counter(client.hand):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "A discarded card is not in your hand.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
+
 
         for card_id in card_ids:
             client.hand.remove(card_id)
@@ -1158,6 +1119,8 @@ class PduDispatcher:
             time_limit_ms=time_limit_ms
         )
         client.active_priority_seq_num = pdu["seq_num"]
+        import time
+        client.priority_deadline = time.time() + (time_limit_ms / 1000.0)
         return pdu
 
     def send_stack_push(
@@ -1179,6 +1142,17 @@ class PduDispatcher:
             controller=controller
         )
 
+    def broadcast_stack_push(self, stack_item):
+        for client in list(self.server.clients):
+            self.send_stack_push(
+                client,
+                stack_item.get("stack_item_id"),
+                stack_item.get("item_type"),
+                stack_item.get("source"),
+                stack_item.get("controller"),
+                stack_item.get("targets")
+            )
+
     def send_trigger_order(self, client, player_id, trigger_ids):
         client.pending_trigger_ids = list(trigger_ids)
         pdu = self._send(
@@ -1189,6 +1163,9 @@ class PduDispatcher:
         )
         client.active_trigger_seq_num = pdu["seq_num"]
         return pdu
+
+    def send_trigger_order_prompt(self, client, player_id, trigger_ids):
+        return self.send_trigger_order(client, player_id, trigger_ids)
 
     def send_trigger_choice(
         self,
@@ -1216,6 +1193,15 @@ class PduDispatcher:
         client.active_trigger_seq_num = pdu["seq_num"]
         return pdu
 
+    def send_trigger_choice_prompt(self, client, trg):
+        return self.send_trigger_choice(
+            client,
+            trg.trigger_id,
+            trg.source_id,
+            trg.effect_summary,
+            requires_target=getattr(trg, "requires_target", False),
+            legal_targets=getattr(trg, "legal_targets", [])
+        )
 
     def send_stack_resolve(
         self,
@@ -1231,6 +1217,11 @@ class PduDispatcher:
             result=result,
             state_changes=list(state_changes or [])
         )
+
+    def broadcast_stack_resolve(self, stack_item_id, result, state_changes=None):
+        for client in list(self.server.clients):
+            self.send_stack_resolve(client, stack_item_id, result, state_changes)
+
 
     def send_combat_damage_result(
         self,

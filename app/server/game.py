@@ -45,6 +45,9 @@ class Game:
         self.event_bus = EventBus()
         self.trigger_manager = TriggerManager(self, self.card_catalog)
         self.cant_gain_life_this_turn = False
+        for client in getattr(self, "clients", []):
+            client.ready_in_lobby = False
+
 
 
     def game_setup(self):
@@ -909,6 +912,8 @@ class Game:
         return self.upkeep()
 
 
+
+
     def end_game(self, losing_client, reason):
         winning_client = self.other_client(losing_client)
         winner_id = winning_client.pid if winning_client is not None else None
@@ -917,10 +922,11 @@ class Game:
             return False
         self.game_over = True
         for client in self.clients:
+            client.ready_in_lobby = False
             self.pdu_dispatcher.send_game_over(
                 client,
                 winner_id,
-                losing_client.pid,
+                losing_client.pid if losing_client else None,
                 reason
             )
         return True
@@ -944,8 +950,19 @@ class Game:
 
         while self.clients and not self.game_over:
             self.connection.refuse_extra_connections()
+
+            # Check server priority deadline
+            if self.priority_holder:
+                p_client = self.client_for_player(self.priority_holder)
+                if p_client and getattr(p_client, "priority_deadline", None) is not None:
+                    import time
+                    if time.time() > p_client.priority_deadline:
+                        print(f"Priority deadline expired for {p_client.pid}")
+                        self.end_game(p_client, "TIMEOUT")
+                        break
+
             sockets = [client.sock for client in self.clients]
-            readable, _, _ = select.select(sockets, [], [], 0.5)
+            readable, _, _ = select.select(sockets, [], [], 0.1)
 
             for ready_socket in readable:
                 client = next(
@@ -956,7 +973,11 @@ class Game:
                 try:
                     pdu = client.receive()
                     self.pdu_dispatcher.handle(client, pdu)
-                except (ConnectionError, OSError):
-                    self.return_to_lobby(client)
-                    return
+                except (ValueError, Exception) as err:
+                    if isinstance(err, (ConnectionError, OSError)):
+                        self.return_to_lobby(client)
+                        return
+                    from app.server.pdu_dispatcher import MSG_INVALID_JSON, ERR_INVALID_JSON
+                    self.pdu_dispatcher.send_error(client, MSG_INVALID_JSON, ERR_INVALID_JSON)
+
 

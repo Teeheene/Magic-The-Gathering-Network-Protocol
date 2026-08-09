@@ -3,12 +3,8 @@ from app.shared.card_catalog import CardCatalog
 
 
 def get_base_id(card_id: str) -> str:
-    if not isinstance(card_id, str):
-        return ""
-    parts = card_id.rsplit("_", 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        return parts[0]
-    return card_id
+    return CardCatalog.base_card_id(card_id)
+
 
 
 def calculate_devotion(controller_battlefield: List[Dict[str, Any]], color: str, catalog: CardCatalog) -> int:
@@ -95,16 +91,19 @@ class TriggerManager:
             base_id = get_base_id(attacker_id)
             if base_id == "goblin_guide":
                 ctrl = event.data.get("controller", "")
-                opp = self.game.other_player(ctrl) if hasattr(self.game, "other_player") else ""
+                ctrl_client = self.game.client_for_player(ctrl) if hasattr(self.game, "client_for_player") else None
+                opp_client = self.game.other_client(ctrl_client) if (hasattr(self.game, "other_client") and ctrl_client) else None
+                opp = opp_client.pid if opp_client else ""
                 trg = TriggeredAbility(
                     trigger_id=self.generate_trigger_id(),
                     source_id=attacker_id,
                     controller=ctrl,
                     effect_summary="Defending player reveals top card of library. If land, put in hand.",
                     requires_target=False,
-                    effect_fn=lambda item, game: self._resolve_goblin_guide(opp, game),
+                    effect_fn=lambda item, game, opp_pid=opp: self._resolve_goblin_guide(opp_pid, game),
                 )
                 detected.append(trg)
+
 
         elif event.event_type == "became_target":
             target_id = event.data.get("target_id", "")
@@ -143,10 +142,10 @@ class TriggerManager:
                             )
                             detected.append(trg)
 
-        elif event.event_type == "creature_entered":
-            creature_id = event.data.get("creature_id", "")
+        elif event.event_type in ("creature_entered", "permanent_entered"):
+            creature_id = event.data.get("creature_id", "") or event.data.get("card_id", "")
             ctrl = event.data.get("controller", "")
-            base_id = get_base_id(creature_id)
+            base_id = CardCatalog.base_card_id(creature_id)
 
             if base_id == "gray_merchant":
                 trg = TriggeredAbility(
@@ -161,7 +160,7 @@ class TriggerManager:
             elif base_id == "gravedigger":
                 ctrl_client = self.game.client_for_player(ctrl) if hasattr(self.game, "client_for_player") else None
                 gy = list(ctrl_client.graveyard) if ctrl_client else []
-                creatures_in_gy = [c for c in gy if "creature" in (self.catalog.get_card_data(get_base_id(c)) or {}).get("card_type", "").casefold()]
+                creatures_in_gy = [c for c in gy if "creature" in (self.catalog.get_card_data(CardCatalog.base_card_id(c)) or {}).get("card_type", "").casefold()]
                 if creatures_in_gy:
                     trg = TriggeredAbility(
                         trigger_id=self.generate_trigger_id(),
@@ -181,13 +180,14 @@ class TriggerManager:
         def_client = game.client_for_player(defending_player)
         if def_client and def_client.library:
             top_card = def_client.library[0]
-            base_id = top_card.split("_")[0]
+            base_id = CardCatalog.base_card_id(top_card)
             data = self.catalog.get_card_data(base_id) if self.catalog else None
             is_land = "land" in (data.get("card_type", "").casefold() if data else "")
             print(f"Goblin Guide revealed {top_card} (is_land={is_land})")
             if is_land:
                 def_client.library.pop(0)
                 def_client.hand.append(top_card)
+
 
     def _resolve_phantasmal_bear(self, bear_id: str, game: Any):
         owner, perm = game.find_permanent(bear_id) if hasattr(game, "find_permanent") else (None, None)

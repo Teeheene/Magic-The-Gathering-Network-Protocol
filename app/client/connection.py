@@ -51,19 +51,23 @@ class ClientConnection:
             time.sleep(self.ping_interval)
             if not self.running:
                 break
-            
-            # Check PONG timeout
-            last_pong = getattr(dispatcher.state, "last_pong_timestamp", time.time())
-            if time.time() - last_pong > self.pong_timeout:
-                print("Heartbeat PONG timeout exceeded. Closing connection.")
-                self.close()
-                break
 
             try:
                 dispatcher.send_ping()
             except Exception:
                 self.close()
                 break
+
+            start_wait = time.time()
+            while self.running:
+                if getattr(dispatcher.state, "pending_ping_seq", None) is None:
+                    break
+                if time.time() - start_wait >= self.pong_timeout:
+                    print("Heartbeat PONG timeout exceeded. Closing connection.")
+                    self.close()
+                    return
+                time.sleep(0.05)
+
 
     def listen(self):
         while self.running:
