@@ -81,7 +81,26 @@ class CardCatalog:
     def exists(self, card_id: str) -> bool:
         return card_id in self.catalog
 
+    def is_valid_instance_id(self, card_id: str) -> bool:
+        """Check if card_id is a valid base ID or instance ID within allowed copy limits."""
+        if not isinstance(card_id, str) or not card_id.strip():
+            return False
+        import re
+
+        card_id = card_id.strip()
+        if card_id in self.catalog:
+            return True
+        match = re.match(r"^(.+)_(\d+)$", card_id)
+        if match:
+            base_id, index_str = match.groups()
+            if base_id in self.catalog:
+                max_copies = self.catalog[base_id].get("copies", 20)
+                index = int(index_str)
+                return 1 <= index <= max_copies
+        return False
+
     def get_all_card_ids(self) -> List[str]:
+
         return list(self.catalog.keys())
 
     def get_all_cards(self) -> List[Card]:

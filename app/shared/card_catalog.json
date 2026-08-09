@@ -5,7 +5,14 @@
     "subtype": "Basic Mountain",
     "color": "R",
     "cmc": 0,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 20,
@@ -18,7 +25,14 @@
     "subtype": "Basic Forest",
     "color": "G",
     "cmc": 0,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 20,
@@ -31,7 +45,14 @@
     "subtype": "Basic Plains",
     "color": "W",
     "cmc": 0,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 20,
@@ -44,7 +65,14 @@
     "subtype": "Basic Island",
     "color": "U",
     "cmc": 0,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 20,
@@ -57,7 +85,14 @@
     "subtype": "Basic Swamp",
     "color": "B",
     "cmc": 0,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 20,
@@ -70,7 +105,14 @@
     "subtype": "",
     "color": "R",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -83,7 +125,14 @@
     "subtype": "",
     "color": "R",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -96,7 +145,14 @@
     "subtype": "",
     "color": "R",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -109,7 +165,14 @@
     "subtype": "",
     "color": "R",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -122,7 +185,14 @@
     "subtype": "",
     "color": "R",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -135,7 +205,14 @@
     "subtype": "",
     "color": "R",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -148,11 +225,18 @@
     "subtype": "",
     "color": "R",
     "cmc": 3,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 2 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 2
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
-    "text": "Rift Bolt deals 3 damage to any target.",
+    "text": "Rift Bolt deals 3 damage to any target. Suspend 1\u2014{R}.",
     "keywords": []
   },
   "incinerate": {
@@ -161,11 +245,18 @@
     "subtype": "",
     "color": "R",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
-    "text": "Incinerate deals 3 damage to any target.",
+    "text": "Incinerate deals 3 damage to any target. The damaged permanent or player can't be regenerated this turn.",
     "keywords": []
   },
   "goblin_guide": {
@@ -174,12 +265,21 @@
     "subtype": "Goblin Scout",
     "color": "R",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 0
+    },
     "power": 2,
     "toughness": 2,
     "copies": 4,
     "text": "Haste. Whenever Goblin Guide attacks, defending player reveals top card of library. If it's a land, that player puts it into their hand.",
-    "keywords": ["haste"]
+    "keywords": [
+      "haste"
+    ]
   },
   "goblin_bushwhacker": {
     "name": "Goblin Bushwhacker",
@@ -187,11 +287,18 @@
     "subtype": "Goblin Warrior",
     "color": "R",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 0
+    },
     "power": 1,
     "toughness": 1,
     "copies": 4,
-    "text": "When this enters, creatures you control get +1/+0 and gain haste until end of turn.",
+    "text": "Kicker {1}{R}. When this enters, if it was kicked, creatures you control get +1/+0 and gain haste until end of turn.",
     "keywords": []
   },
   "reckless_wurm": {
@@ -200,11 +307,18 @@
     "subtype": "Wurm",
     "color": "R",
     "cmc": 5,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 3 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 3
+    },
     "power": 4,
     "toughness": 4,
     "copies": 4,
-    "text": "Reckless Wurm.",
+    "text": "Trample. Madness {2}{R}.",
     "keywords": []
   },
   "monastery_swiftspear": {
@@ -213,12 +327,22 @@
     "subtype": "Human Monk",
     "color": "R",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 1, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 1,
+      "G": 0,
+      "Generic": 0
+    },
     "power": 1,
     "toughness": 2,
     "copies": 4,
     "text": "Haste. Prowess (Whenever you cast a noncreature spell, this creature gets +1/+1 until end of turn).",
-    "keywords": ["haste", "prowess"]
+    "keywords": [
+      "haste",
+      "prowess"
+    ]
   },
   "counterspell": {
     "name": "Counterspell",
@@ -226,7 +350,14 @@
     "subtype": "",
     "color": "U",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 2, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 2,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -239,7 +370,14 @@
     "subtype": "",
     "color": "U",
     "cmc": 3,
-    "mana_cost": { "W": 0, "U": 2, "B": 0, "R": 0, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 2,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -252,7 +390,14 @@
     "subtype": "",
     "color": "U",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 1, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 1,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -265,11 +410,18 @@
     "subtype": "",
     "color": "U",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 1, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 1,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
-    "text": "Draw a card.",
+    "text": "Look at top 3 cards of your library, then put them back in any order. You may shuffle. Draw a card.",
     "keywords": []
   },
   "negate": {
@@ -278,7 +430,14 @@
     "subtype": "",
     "color": "U",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 1, "B": 0, "R": 0, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 1,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -291,11 +450,18 @@
     "subtype": "",
     "color": "U",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 1, "B": 0, "R": 0, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 1,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
-    "text": "Counter target spell.",
+    "text": "Counter target spell unless its controller pays {3}.",
     "keywords": []
   },
   "merfolk_looter": {
@@ -304,7 +470,14 @@
     "subtype": "Merfolk Rogue",
     "color": "U",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 1, "B": 0, "R": 0, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 1,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 1
+    },
     "power": 1,
     "toughness": 1,
     "copies": 4,
@@ -317,7 +490,14 @@
     "subtype": "Human Wizard",
     "color": "U",
     "cmc": 3,
-    "mana_cost": { "W": 0, "U": 1, "B": 0, "R": 0, "G": 0, "Generic": 2 },
+    "mana_cost": {
+      "W": 0,
+      "U": 1,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 2
+    },
     "power": 1,
     "toughness": 1,
     "copies": 4,
@@ -330,12 +510,21 @@
     "subtype": "Elemental",
     "color": "U",
     "cmc": 5,
-    "mana_cost": { "W": 0, "U": 2, "B": 0, "R": 0, "G": 0, "Generic": 3 },
+    "mana_cost": {
+      "W": 0,
+      "U": 2,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 3
+    },
     "power": 4,
     "toughness": 4,
     "copies": 4,
     "text": "Flying.",
-    "keywords": ["flying"]
+    "keywords": [
+      "flying"
+    ]
   },
   "phantasmal_bear": {
     "name": "Phantasmal Bear",
@@ -343,7 +532,14 @@
     "subtype": "Bear Illusion",
     "color": "U",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 1, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 1,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": 2,
     "toughness": 2,
     "copies": 4,
@@ -356,7 +552,14 @@
     "subtype": "",
     "color": "G",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 1, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 1,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -369,7 +572,14 @@
     "subtype": "",
     "color": "G",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 1, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 1,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -382,7 +592,14 @@
     "subtype": "",
     "color": "G",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 1, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 1,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -395,11 +612,18 @@
     "subtype": "",
     "color": "G",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 1, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 1,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
-    "text": "Target creature gets +4/+4 until end of turn.",
+    "text": "Kicker {G}. Target creature can't be the target of spells or abilities your opponents control this turn. If this spell was kicked, that creature gets +4/+4 until end of turn.",
     "keywords": []
   },
   "llanowar_elves": {
@@ -408,7 +632,14 @@
     "subtype": "Elf Druid",
     "color": "G",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 1, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 1,
+      "Generic": 0
+    },
     "power": 1,
     "toughness": 1,
     "copies": 4,
@@ -421,7 +652,14 @@
     "subtype": "Elf Druid",
     "color": "G",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 1, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 1,
+      "Generic": 0
+    },
     "power": 1,
     "toughness": 1,
     "copies": 4,
@@ -434,7 +672,14 @@
     "subtype": "Bear",
     "color": "G",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 1, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 1,
+      "Generic": 1
+    },
     "power": 2,
     "toughness": 2,
     "copies": 4,
@@ -447,7 +692,14 @@
     "subtype": "Beast",
     "color": "G",
     "cmc": 3,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 3, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 3,
+      "Generic": 0
+    },
     "power": 4,
     "toughness": 5,
     "copies": 4,
@@ -460,12 +712,21 @@
     "subtype": "Troll Shaman",
     "color": "G",
     "cmc": 3,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 2, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 2,
+      "Generic": 1
+    },
     "power": 3,
     "toughness": 2,
     "copies": 4,
-    "text": "Hexproof.",
-    "keywords": ["hexproof"]
+    "text": "Hexproof. {1}{G}: Regenerate Troll Ascetic.",
+    "keywords": [
+      "hexproof"
+    ]
   },
   "wall_of_stone": {
     "name": "Wall of Stone",
@@ -473,12 +734,21 @@
     "subtype": "Wall",
     "color": "R",
     "cmc": 3,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 2, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 2,
+      "G": 0,
+      "Generic": 1
+    },
     "power": 0,
     "toughness": 8,
     "copies": 4,
     "text": "Defender.",
-    "keywords": ["defender"]
+    "keywords": [
+      "defender"
+    ]
   },
   "swords_to_plowshares": {
     "name": "Swords to Plowshares",
@@ -486,7 +756,14 @@
     "subtype": "",
     "color": "W",
     "cmc": 1,
-    "mana_cost": { "W": 1, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 1,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -499,11 +776,18 @@
     "subtype": "",
     "color": "W",
     "cmc": 1,
-    "mana_cost": { "W": 1, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 1,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
-    "text": "Exile target creature.",
+    "text": "Exile target creature. Its controller may search for a basic land, put it onto the battlefield tapped, then shuffle.",
     "keywords": []
   },
   "healing_salve": {
@@ -512,7 +796,14 @@
     "subtype": "",
     "color": "W",
     "cmc": 1,
-    "mana_cost": { "W": 1, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 1,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -525,7 +816,14 @@
     "subtype": "Aura",
     "color": "W",
     "cmc": 2,
-    "mana_cost": { "W": 1, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 1,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -538,12 +836,22 @@
     "subtype": "Human Knight",
     "color": "W",
     "cmc": 2,
-    "mana_cost": { "W": 2, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 2,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": 2,
     "toughness": 2,
     "copies": 4,
     "text": "First strike. Protection from black.",
-    "keywords": ["first_strike", "protection_from_black"]
+    "keywords": [
+      "first_strike",
+      "protection_from_black"
+    ]
   },
   "serra_angel": {
     "name": "Serra Angel",
@@ -551,12 +859,22 @@
     "subtype": "Angel",
     "color": "W",
     "cmc": 5,
-    "mana_cost": { "W": 2, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 3 },
+    "mana_cost": {
+      "W": 2,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 3
+    },
     "power": 4,
     "toughness": 4,
     "copies": 4,
     "text": "Flying. Vigilance.",
-    "keywords": ["flying", "vigilance"]
+    "keywords": [
+      "flying",
+      "vigilance"
+    ]
   },
   "savannah_lions": {
     "name": "Savannah Lions",
@@ -564,7 +882,14 @@
     "subtype": "Cat",
     "color": "W",
     "cmc": 1,
-    "mana_cost": { "W": 1, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 1,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": 2,
     "toughness": 1,
     "copies": 4,
@@ -577,7 +902,14 @@
     "subtype": "Human Cleric",
     "color": "W",
     "cmc": 1,
-    "mana_cost": { "W": 1, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 1,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": 1,
     "toughness": 1,
     "copies": 4,
@@ -590,7 +922,14 @@
     "subtype": "",
     "color": "B",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 1, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 1,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -603,11 +942,18 @@
     "subtype": "",
     "color": "B",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 1, "R": 0, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 1,
+      "R": 0,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
-    "text": "Destroy target nonartifact, nonblack creature.",
+    "text": "Destroy target nonartifact, nonblack creature. It can't be regenerated.",
     "keywords": []
   },
   "doom_blade": {
@@ -616,7 +962,14 @@
     "subtype": "",
     "color": "B",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 1, "R": 0, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 1,
+      "R": 0,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -629,7 +982,14 @@
     "subtype": "",
     "color": "B",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 1, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 1,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -642,7 +1002,14 @@
     "subtype": "",
     "color": "B",
     "cmc": 3,
-    "mana_cost": { "W": 0, "U": 0, "B": 1, "R": 0, "G": 0, "Generic": 2 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 1,
+      "R": 0,
+      "G": 0,
+      "Generic": 2
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -655,7 +1022,14 @@
     "subtype": "Zombie",
     "color": "B",
     "cmc": 5,
-    "mana_cost": { "W": 0, "U": 0, "B": 2, "R": 0, "G": 0, "Generic": 3 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 2,
+      "R": 0,
+      "G": 0,
+      "Generic": 3
+    },
     "power": 2,
     "toughness": 4,
     "copies": 4,
@@ -668,7 +1042,14 @@
     "subtype": "Zombie",
     "color": "B",
     "cmc": 4,
-    "mana_cost": { "W": 0, "U": 0, "B": 1, "R": 0, "G": 0, "Generic": 3 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 1,
+      "R": 0,
+      "G": 0,
+      "Generic": 3
+    },
     "power": 2,
     "toughness": 2,
     "copies": 4,
@@ -681,7 +1062,14 @@
     "subtype": "Human Assassin",
     "color": "B",
     "cmc": 3,
-    "mana_cost": { "W": 0, "U": 0, "B": 2, "R": 0, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 2,
+      "R": 0,
+      "G": 0,
+      "Generic": 1
+    },
     "power": 1,
     "toughness": 1,
     "copies": 4,
@@ -694,12 +1082,22 @@
     "subtype": "Human Knight",
     "color": "B",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 2, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 2,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": 2,
     "toughness": 2,
     "copies": 4,
     "text": "First strike. Protection from white.",
-    "keywords": ["first_strike", "protection_from_white"]
+    "keywords": [
+      "first_strike",
+      "protection_from_white"
+    ]
   },
   "sol_ring": {
     "name": "Sol Ring",
@@ -707,7 +1105,14 @@
     "subtype": "",
     "color": "C",
     "cmc": 1,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 1 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 1
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
@@ -720,12 +1125,21 @@
     "subtype": "Thopter",
     "color": "C",
     "cmc": 0,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 0 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 0
+    },
     "power": 0,
     "toughness": 2,
     "copies": 4,
     "text": "Flying.",
-    "keywords": ["flying"]
+    "keywords": [
+      "flying"
+    ]
   },
   "millstone": {
     "name": "Millstone",
@@ -733,11 +1147,18 @@
     "subtype": "",
     "color": "C",
     "cmc": 2,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 2 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 2
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
-    "text": "{2}, Tap: Target player mills 2 cards.",
+    "text": "{2}, Tap: Target player mills 2 cards (puts top 2 cards of their library into their graveyard).",
     "keywords": []
   },
   "rod_of_ruin": {
@@ -746,7 +1167,14 @@
     "subtype": "",
     "color": "C",
     "cmc": 4,
-    "mana_cost": { "W": 0, "U": 0, "B": 0, "R": 0, "G": 0, "Generic": 4 },
+    "mana_cost": {
+      "W": 0,
+      "U": 0,
+      "B": 0,
+      "R": 0,
+      "G": 0,
+      "Generic": 4
+    },
     "power": null,
     "toughness": null,
     "copies": 4,
