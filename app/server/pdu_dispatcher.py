@@ -1020,17 +1020,16 @@ class PduDispatcher:
             )
 
 
-        for card_id in card_ids:
-            client.hand.remove(card_id)
-            client.graveyard.append(card_id)
-        self._broadcast_game_state()
-        if (
-            self.server.phase == "CLEANUP"
-            and client.pid == self.server.active_player
-            and len(client.hand) <= 7
-        ):
-            return self.server.finish_cleanup()
-        return True
+        def finish_discard():
+            self._broadcast_game_state()
+            if (
+                self.server.phase == "CLEANUP"
+                and client.pid == self.server.active_player
+                and len(client.hand) <= 7
+            ):
+                return self.server.finish_cleanup()
+            return True
+        return self.server.discard_cards_with_madness(client, card_ids, finish_discard)
 
     def handle_concede(self, client, pdu):
         player_id = pdu.get("player_id")

@@ -877,6 +877,57 @@ class Game:
             return list(selected)
         return validate
 
+    def discard_cards_with_madness(self, client, card_ids, completion):
+        remaining = list(card_ids)
+
+        def advance():
+            if not remaining:
+                return completion()
+            card_id = remaining.pop(0)
+            client.hand.remove(card_id)
+            if self.base_card_id(card_id) != "reckless_wurm":
+                client.graveyard.append(card_id)
+                return advance()
+
+            client.exile.append(card_id)
+            def validate_madness(pdu):
+                cast = pdu.get("cast")
+                if not isinstance(cast, bool):
+                    return None
+                if not cast:
+                    return (False, None)
+                payment = self.normalize_mana_payment(pdu.get("mana_payment"))
+                if payment != {"R": 1, "X": 2}:
+                    return None
+                plan = self.plan_mana_payment(client, payment)
+                return (True, plan) if plan is not None else None
+
+            def finish_madness(decision):
+                cast, plan = decision
+                client.exile.remove(card_id)
+                if not cast:
+                    client.graveyard.append(card_id)
+                else:
+                    self.commit_mana_payment(client, plan)
+                    stack_item = {
+                        "stack_item_id": self.pdu_dispatcher._next_stack_item_id(),
+                        "item_type": "SPELL", "source": card_id,
+                        "controller": client.pid, "targets": [],
+                        "mana_payment": {"R": 1, "Generic": 2}, "madness": True,
+                    }
+                    self.stack.append(stack_item)
+                    self.pdu_dispatcher.broadcast_stack_push(stack_item)
+                return advance()
+
+            self.pdu_dispatcher.send_card_choice_request(
+                client, card_id, "MADNESS_CAST", "Cast Reckless Wurm for its Madness cost?",
+                0, 1, [], required_mana={"R": 1, "Generic": 2},
+                validator=validate_madness, continuation=finish_madness,
+            )
+            return False
+
+        return advance()
+
     def is_protected_from(self, target_permanent, source_permanent):
         if not isinstance(target_permanent, dict) or not isinstance(source_permanent, dict):
             return False
@@ -1093,12 +1144,12 @@ class Game:
                 if count:
                     def finish_loot(selected):
                         card_id = selected[0]
-                        ctrl_client.hand.remove(card_id)
-                        ctrl_client.graveyard.append(card_id)
-                        self.pdu_dispatcher.broadcast_stack_resolve(item["stack_item_id"], "RESOLVED", [
-                            {"type": "DRAW_DISCARD", "player": controller}
-                        ])
-                        return self.post_event()
+                        def complete_loot():
+                            self.pdu_dispatcher.broadcast_stack_resolve(item["stack_item_id"], "RESOLVED", [
+                                {"type": "DRAW_DISCARD", "player": controller}
+                            ])
+                            return self.post_event()
+                        return self.discard_cards_with_madness(ctrl_client, [card_id], complete_loot)
                     self.pdu_dispatcher.send_card_choice_request(
                         ctrl_client, source_id, "SELECT_CARDS", "Choose one card to discard.",
                         1, 1, options,
@@ -1226,10 +1277,10 @@ class Game:
                 if count == 0:
                     return finish_choice_spell([])
                 def finish_mind_rot(selected):
-                    for card_id in selected:
-                        target_client.hand.remove(card_id)
-                        target_client.graveyard.append(card_id)
-                    return finish_choice_spell([{"type": "DISCARD", "player": target_client.pid, "count": len(selected)}])
+                    return self.discard_cards_with_madness(
+                        target_client, selected,
+                        lambda: finish_choice_spell([{"type": "DISCARD", "player": target_client.pid, "count": len(selected)}]),
+                    )
                 self.pdu_dispatcher.send_card_choice_request(
                     target_client, source_id, "SELECT_CARDS", f"Choose {count} card(s) to discard.",
                     count, count, options,

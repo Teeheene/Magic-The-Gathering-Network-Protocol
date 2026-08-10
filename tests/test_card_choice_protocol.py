@@ -293,6 +293,51 @@ class CardChoiceFixture(unittest.TestCase):
             **common, "card_id": "rift_bolt_002", "mana_payment": {"R": 1},
         }))
 
+    def test_reckless_wurm_madness_from_looter_cast_and_decline(self):
+        self.alice.hand = ["shock_001"]
+        self.alice.library = ["reckless_wurm_001"]
+        self.alice.battlefield = [
+            {"id": "mountain_001", "tapped": False},
+            {"id": "mountain_002", "tapped": False},
+            {"id": "mountain_003", "tapped": False},
+        ]
+        self.resolve_item("merfolk_looter_001", item_type="ABILITY")
+        self.answer(self.alice, selected_cards=["reckless_wurm_001"])
+        self.assertEqual(self.alice.pending_card_choice["choice_type"], "MADNESS_CAST")
+        self.assertIn("reckless_wurm_001", self.alice.exile)
+        self.assertFalse(self.answer(self.alice, cast=True, mana_payment={"R": 1, "Generic": 1}))
+        self.answer(self.alice, cast=True, mana_payment={"R": 1, "Generic": 2})
+        self.assertEqual(self.game.stack[-1]["source"], "reckless_wurm_001")
+        self.assertTrue(self.game.stack[-1]["madness"])
+        self.game.resolve_top_stack_item()
+        self.assertIn("reckless_wurm_001", [p["id"] for p in self.alice.battlefield])
+
+        self.alice.hand = ["reckless_wurm_002", "island_001"]
+        self.alice.library = []
+        self.resolve_item("merfolk_looter_002", item_type="ABILITY")
+        self.answer(self.alice, selected_cards=["reckless_wurm_002"])
+        self.answer(self.alice, cast=False)
+        self.assertIn("reckless_wurm_002", self.alice.graveyard)
+
+    def test_madness_is_available_from_mind_rot_and_cleanup_discard(self):
+        self.bob.hand = ["reckless_wurm_003", "island_001"]
+        self.resolve_item("mind_rot_001", targets=["bob"])
+        self.answer(self.bob, selected_cards=["reckless_wurm_003", "island_001"])
+        self.assertEqual(self.bob.pending_card_choice["choice_type"], "MADNESS_CAST")
+        self.answer(self.bob, cast=False)
+        self.assertIn("reckless_wurm_003", self.bob.graveyard)
+
+        self.game.phase = "CLEANUP"
+        self.game.active_player = "alice"
+        self.alice.hand = [f"mountain_{i:03d}" for i in range(1, 8)] + ["reckless_wurm_004"]
+        self.alice.active_cleanup_seq_num = 70
+        self.assertFalse(self.game.pdu_dispatcher.handle_discard(self.alice, {
+            "type": "DISCARD", "seq_num": 70, "card_ids": ["reckless_wurm_004"],
+        }))
+        self.assertEqual(self.alice.pending_card_choice["choice_type"], "MADNESS_CAST")
+        self.answer(self.alice, cast=False)
+        self.assertIn("reckless_wurm_004", self.alice.graveyard)
+
 
 if __name__ == "__main__":
     unittest.main()

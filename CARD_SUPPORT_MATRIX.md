@@ -19,7 +19,7 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Incinerate | incinerate | Instant | Damage; stop regeneration | COMPLETE | `test_terror_and_incinerate_honor_no_regeneration` | — |
 | Goblin Guide | goblin_guide | Creature | Haste; attack trigger | COMPLETE | `test_real_trigger_orchestration_goblin_guide` | — |
 | Goblin Bushwhacker | goblin_bushwhacker | Creature | Kicker ETB team buff/haste | COMPLETE | `test_bushwhacker_exact_normal_and_kicked_payments_and_cleanup`, `test_bushwhacker_rejects_intermediate_extra_and_insufficient_payment` | Kicker is inferred from exact documented mana_payment; no PDU field added |
-| Reckless Wurm | reckless_wurm | Creature | Madness; Trample excluded | PARTIAL | `test_reckless_wurm_normal_cast_enters_as_creature` | Normal cast works; Madness has no discard-triggered offer/acceptance or alternate-cast encoding; MTGNP excludes trample overflow |
+| Reckless Wurm | reckless_wurm | Creature | Madness; Trample excluded | COMPLETE | `test_reckless_wurm_normal_cast_enters_as_creature`, `test_reckless_wurm_madness_from_looter_cast_and_decline`, `test_madness_is_available_from_mind_rot_and_cleanup_discard` | MADNESS_CAST covers supported discard paths; MTGNP intentionally excludes trample overflow |
 | Monastery Swiftspear | monastery_swiftspear | Creature | Haste; Prowess | COMPLETE | `test_real_trigger_orchestration_swiftspear_prowess` | — |
 | Counterspell | counterspell | Instant | Counter spell | COMPLETE | `test_counterspell_zone_movement_e2e` | — |
 | Cancel | cancel | Instant | Counter spell | COMPLETE | `test_cancel_and_negate_counter_through_cast_stack_path` | — |
@@ -65,28 +65,16 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 
 ## Current totals
 
-- COMPLETE: 49
-- PARTIAL: 1
+- COMPLETE: 50
+- PARTIAL: 0
 - MISSING: 0
 - NO SPECIAL ENGINE WORK REQUIRED: 8
 - Total: 58
 
-## Protocol decision gaps
+## Experimental protocol extension
 
-The fixed 25-PDU MTGNP protocol has no compatible wire representation for these required player choices. CAST_SPELL (`card_id`, `targets`, `mana_payment`), ACTIVATE_ABILITY (`source_id`, `ability_index`, `targets`, `cost_payment`), TRIGGER_CHOICE / TRIGGER_CHOICE_RESPONSE, TRIGGER_ORDER / TRIGGER_ORDER_RESPONSE, and Cleanup-only DISCARD were inspected; none may be overloaded with undocumented meanings.
+The branch adds a private, sequence-correlated CARD_CHOICE_REQUEST / CARD_CHOICE_RESPONSE pair with fixed choice types, plus the narrow SUSPEND_CARD action. Healing Salve alone adds the optional CAST_SPELL `mode` field. These extensions cover the former decision gaps without overloading base MTGNP fields.
 
-- Merfolk Looter: ACTIVATE_ABILITY can identify the source/targets/cost, but cannot encode which newly hidden hand card to discard; DISCARD is explicitly Cleanup-only and trigger responses apply only to triggered abilities.
-- Mother of Runes: ACTIVATE_ABILITY can target the creature, but has no chosen-color field; targets/cost_payment and trigger responses cannot legally encode a color.
-- Rampant Growth: CAST_SPELL can identify the spell/payment, but targets cannot expose or select a private library card and no search-choice response exists.
-- Path to Exile: CAST_SPELL targets the creature, but no PDU carries the affected controller's optional-search decision or private basic-land selection.
-- Mind Rot: CAST_SPELL targets the player, but DISCARD is Cleanup-only and no request/response lets that player select two hidden hand cards during resolution.
-- Ponder: CAST_SPELL has no private top-three ordering or optional-shuffle response; targets and trigger responses are not legal encodings.
-- Mana Leak: CAST_SPELL targets the stack item, but no PDU requests or carries the affected spell controller's pay-three decision; mana_payment belongs to the caster's spell declaration.
-- Healing Salve: CAST_SPELL has neither a mode field nor a prevention-target choice; targets cannot distinguish both catalog modes and trigger responses do not apply.
-
-Other RFC representation gaps:
-
-- Rift Bolt Suspend: CAST_SPELL has no action discriminator for casting versus suspending and the protocol defines no exile/time-counter lifecycle messages. Normal casting is supported.
-- Reckless Wurm Madness: no PDU offers the discarded card to its owner, records acceptance, or legally declares the alternate Madness cast at the required time. Normal casting is supported; trample overflow remains excluded by MTGNP 1.0.
+Reckless Wurm's printed Trample remains catalogued but trample overflow is intentionally excluded by MTGNP 1.0 and is not treated as an incomplete bonus effect.
 
 Kicker is representable for the two catalog cards using exact documented mana_payment values: Goblin Bushwhacker accepts only `{R:1}` or `{R:2, Generic:1}`; Vines of Vastwood accepts only `{G:1}` or `{G:2}`. Kicked status is authoritative internal stack state and is never added to a PDU.
