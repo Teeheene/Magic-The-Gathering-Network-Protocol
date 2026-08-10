@@ -71,3 +71,11 @@ For headless CI use:
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v --tb=short
 ```
+
+### Card artwork cache
+
+Artwork is fetched asynchronously from Scryfall and cached under the platform user cache
+(`QStandardPaths.CacheLocation/MTGNP/cards`). Internet access is optional after caching; failed
+requests retain fully playable metadata-only cards. The optional developer utility
+`python -m app.client.qt.precache_assets` warms one request per unique base card. Artwork is
+presentation-only and remains owned by its provider.

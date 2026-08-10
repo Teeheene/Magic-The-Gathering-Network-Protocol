@@ -1,13 +1,17 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtGui import QPixmap
+from app.shared.card_catalog import CardCatalog
 
 
 class CardWidget(QFrame):
     clicked = Signal(str)
 
-    def __init__(self, card, parent=None):
+    def __init__(self, card, parent=None, asset_manager=None, variant="art"):
         super().__init__(parent)
         self.card = card
+        self.asset_manager = asset_manager
+        self._asset_base = CardCatalog.base_card_id(card.card_id)
         self.setObjectName("CardWidget")
         self.setMinimumSize(130, 170)
         layout = QVBoxLayout(self)
@@ -16,6 +20,11 @@ class CardWidget(QFrame):
         self.name_label.setWordWrap(True)
         self.name_label.setStyleSheet("font-weight:700; color:#f5f1e8;")
         layout.addWidget(self.name_label)
+        self.art_label = QLabel("No artwork cached")
+        self.art_label.setAlignment(Qt.AlignCenter)
+        self.art_label.setMinimumHeight(72)
+        self.art_label.setStyleSheet("background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #34495e,stop:1 #17212b); color:#bdc7d3; border-radius:4px;")
+        layout.addWidget(self.art_label)
         layout.addWidget(QLabel(card.mana_cost))
         type_label = QLabel(card.card_type)
         type_label.setStyleSheet("color:#b9c0cc;")
@@ -25,6 +34,14 @@ class CardWidget(QFrame):
         if card.tapped:
             layout.addWidget(QLabel("TAPPED", alignment=Qt.AlignCenter))
         self.setStyleSheet("QFrame#CardWidget { background:#25313a; border:1px solid #596775; border-radius:8px; }")
+        if asset_manager:
+            asset_manager.image_ready.connect(self._on_image_ready)
+            asset_manager.request(card.card_id, variant)
+
+    def _on_image_ready(self, base_id, variant, pixmap):
+        if base_id != self._asset_base or variant != "art" or self.card is None: return
+        self.art_label.setPixmap(pixmap.scaled(self.art_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.art_label.setText("")
 
     def mousePressEvent(self, event):
         self.clicked.emit(self.card.card_id)
@@ -34,7 +51,7 @@ class CardWidget(QFrame):
 class ZoneWidget(QFrame):
     card_clicked = Signal(str)
 
-    def __init__(self, title, parent=None):
+    def __init__(self, title, parent=None, asset_manager=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
         self.title = QLabel(title)
@@ -42,6 +59,7 @@ class ZoneWidget(QFrame):
         self.layout.addWidget(self.title)
         self.cards_layout = QVBoxLayout()
         self.layout.addLayout(self.cards_layout)
+        self.asset_manager = asset_manager
 
     def set_cards(self, cards):
         while self.cards_layout.count():
@@ -49,6 +67,6 @@ class ZoneWidget(QFrame):
             if item.widget():
                 item.widget().deleteLater()
         for card in cards:
-            widget = CardWidget(card)
+            widget = CardWidget(card, asset_manager=self.asset_manager)
             widget.clicked.connect(self.card_clicked)
             self.cards_layout.addWidget(widget)
