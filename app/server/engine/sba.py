@@ -61,6 +61,21 @@ class StateBasedActions:
                         toughness = perm.get("toughness")
                         damage = perm.get("damage", 0)
                         if toughness is not None and (toughness <= 0 or damage >= toughness):
+                            if (
+                                toughness > 0
+                                and perm.get("regeneration_shield")
+                                and not perm.get("cant_regenerate")
+                            ):
+                                perm["regeneration_shield"] = False
+                                perm["tapped"] = True
+                                perm["damage"] = 0
+                                changes.append({
+                                    "type": "REGENERATE",
+                                    "card_id": perm.get("id", ""),
+                                    "owner": client.pid,
+                                })
+                                pass_changes += 1
+                                continue
                             client.battlefield.remove(perm)
                             cid = perm.get("id", "")
                             client.graveyard.append(cid)

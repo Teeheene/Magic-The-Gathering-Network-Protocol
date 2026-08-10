@@ -118,11 +118,12 @@ class CardEffects:
 
         # Destroy spells (Terror, Doom Blade, Naturalize)
         if base_id in {"terror", "doom_blade", "naturalize"}:
-            owner, perm = game.find_permanent(target_id) if hasattr(game, "find_permanent") else (None, None)
-            if owner and perm:
-                owner.battlefield.remove(perm)
-                owner.graveyard.append(target_id)
-                changes.append({"type": "DESTROY", "target": target_id})
+            change = game.destroy_permanent(
+                target_id,
+                allow_regeneration=base_id != "terror",
+            )
+            if change:
+                changes.append(change)
                 return "RESOLVED", changes
 
         return "RESOLVED", changes
@@ -149,10 +150,16 @@ class CardEffects:
         if base_id == "royal_assassin":
             owner, perm = game.find_permanent(target_id) if hasattr(game, "find_permanent") else (None, None)
             if owner and perm and isinstance(perm, dict) and perm.get("tapped"):
-                owner.battlefield.remove(perm)
-                owner.graveyard.append(target_id)
-                changes.append({"type": "DESTROY", "target": target_id})
+                change = game.destroy_permanent(target_id)
+                changes.append(change)
                 return "RESOLVED", changes
+            return "FIZZLE", []
+
+        if base_id == "troll_ascetic":
+            owner, permanent = game.find_permanent(source_id)
+            if owner is controller_client and isinstance(permanent, dict):
+                permanent["regeneration_shield"] = True
+                return "RESOLVED", [{"type": "REGENERATION_SHIELD", "target": source_id}]
             return "FIZZLE", []
 
         if base_id == "millstone":

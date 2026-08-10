@@ -450,7 +450,9 @@ class PduDispatcher:
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-        if not self.server.targets_are_legal(source_id, targets, is_ability=True):
+        if not self.server.targets_are_legal(
+            source_id, targets, is_ability=True, controller_id=client.pid
+        ):
             return self.send_error(
                 client,
                 "The ability's targets are missing or illegal.",

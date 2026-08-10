@@ -159,6 +159,21 @@ class Game:
             target_data = self.card_data(target_id) or {}
             return "creature" in target_data.get("card_type", "").casefold()
 
+        target_owner, target_permanent = self.find_permanent(target_id)
+        if isinstance(target_permanent, dict):
+            target_data = self.card_data(target_permanent.get("id", "")) or {}
+            target_keywords = self.permanent_keywords(target_permanent)
+            target_keywords.update(
+                str(keyword).casefold().replace("_", " ")
+                for keyword in target_data.get("keywords", [])
+            )
+            if (
+                "hexproof" in target_keywords
+                and target_owner is not None
+                and target_owner.pid != controller_id
+            ):
+                return False
+
         # Counterspells: target must be on stack
         if base_id in {"counterspell", "cancel", "mana_leak", "negate"}:
             stack_item = next(
@@ -404,10 +419,20 @@ class Game:
             return {"type": "DAMAGE", "target": target_id, "amount": amount}
         return None
 
-    def destroy_permanent(self, target_id):
+    def destroy_permanent(self, target_id, allow_regeneration=True):
         owner, permanent = self.find_permanent(target_id)
         if owner is None or permanent is None:
             return None
+        if (
+            allow_regeneration
+            and isinstance(permanent, dict)
+            and permanent.get("regeneration_shield")
+            and not permanent.get("cant_regenerate")
+        ):
+            permanent["regeneration_shield"] = False
+            permanent["tapped"] = True
+            permanent["damage"] = 0
+            return {"type": "REGENERATE", "target": target_id}
         owner.battlefield.remove(permanent)
         owner.graveyard.append(target_id)
         return {"type": "DESTROY", "target": target_id}
@@ -1115,12 +1140,14 @@ class Game:
 
         self.cant_gain_life_this_turn = False
         for client in self.clients:
+            client.mana_pool = {}
             for permanent in client.battlefield:
                 if isinstance(permanent, dict):
                     permanent["damage"] = 0
                     permanent["temp_power_buff"] = 0
                     permanent["temp_toughness_buff"] = 0
                     permanent["cant_regenerate"] = False
+                    permanent["regeneration_shield"] = False
 
         active_client = self.client_for_player(self.active_player)
         next_client = self.other_client(active_client)
