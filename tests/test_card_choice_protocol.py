@@ -45,6 +45,21 @@ class CardChoiceFixture(unittest.TestCase):
             continuation=continuation,
         )
 
+    def resolve_item(self, source, controller="alice", targets=None, item_type="SPELL"):
+        self.game.stack.append({
+            "stack_item_id": 99, "item_type": item_type, "source": source,
+            "controller": controller, "targets": list(targets or []),
+        })
+        return self.game.resolve_top_stack_item()
+
+    def answer(self, client, **fields):
+        return self.game.pdu_dispatcher.handle(client, {
+            "type": "CARD_CHOICE_RESPONSE",
+            "seq_num": client.active_card_choice_seq_num,
+            "player_id": client.pid,
+            **fields,
+        })
+
     def test_client_tracks_independent_choice_token_and_builds_response(self):
         state = ClientState("alice")
         connection = MagicMock()
@@ -94,6 +109,55 @@ class CardChoiceFixture(unittest.TestCase):
         self.assertIsNotNone(self.game.pdu_dispatcher.handle(self.alice, {
             "type": "PING", "seq_num": 7, "timestamp": 1,
         }))
+
+    def test_merfolk_looter_draws_then_privately_selects_discard(self):
+        self.alice.hand = ["shock_001"]
+        self.alice.library = ["island_001"]
+        self.resolve_item("merfolk_looter_001", item_type="ABILITY")
+        self.assertEqual(self.alice.pending_card_choice["options"], ["shock_001", "island_001"])
+        self.assertFalse(any(b"CARD_CHOICE_REQUEST" in call.args[0] for call in self.bob.sock.sendall.call_args_list))
+        self.assertTrue(self.answer(self.alice, selected_cards=["island_001"]))
+        self.assertEqual(self.alice.hand, ["shock_001"])
+        self.assertEqual(self.alice.graveyard, ["island_001"])
+
+    def test_mind_rot_target_selects_exact_available_count(self):
+        self.bob.hand = ["island_001", "shock_001", "forest_001"]
+        self.resolve_item("mind_rot_001", targets=["bob"])
+        self.assertEqual(self.bob.pending_card_choice["min_choices"], 2)
+        self.assertFalse(self.answer(self.bob, selected_cards=["island_001", "island_001"]))
+        self.assertTrue(self.answer(self.bob, selected_cards=["island_001", "shock_001"]))
+        self.assertEqual(self.bob.hand, ["forest_001"])
+        self.assertIn("mind_rot_001", self.alice.graveyard)
+
+    def test_mother_color_choice_and_cleanup(self):
+        target = {"id": "grizzly_bears_001", "keywords": []}
+        self.alice.battlefield = [target]
+        self.resolve_item("mother_of_runes_001", targets=[target["id"]], item_type="ABILITY")
+        self.assertFalse(self.answer(self.alice, color="PURPLE"))
+        self.answer(self.alice, color="BLACK")
+        self.assertIn("protection from black", self.game.permanent_keywords(target))
+        self.game.finish_cleanup()
+        self.assertNotIn("protection from black", self.game.permanent_keywords(target))
+
+    def test_rampant_growth_selects_basic_tapped_and_shuffles(self):
+        self.alice.library = ["shock_001", "forest_001", "island_001"]
+        self.resolve_item("rampant_growth_001")
+        self.assertEqual(set(self.alice.pending_card_choice["options"]), {"forest_001", "island_001"})
+        self.assertTrue(self.answer(self.alice, selected_cards=["forest_001"]))
+        self.assertIn({"id": "forest_001", "tapped": True}, self.alice.battlefield)
+        self.assertNotIn("forest_001", self.alice.library)
+
+    def test_path_exiles_then_affected_controller_may_search(self):
+        creature = {"id": "grizzly_bears_001", "keywords": []}
+        self.bob.battlefield = [creature]
+        self.bob.library = ["island_001", "shock_001"]
+        self.resolve_item("path_to_exile_001", targets=[creature["id"]])
+        self.assertIn(creature["id"], self.bob.exile)
+        self.assertEqual(self.bob.pending_card_choice["choice_type"], "YES_NO")
+        self.answer(self.bob, answer=True)
+        self.assertEqual(self.bob.pending_card_choice["choice_type"], "SELECT_CARDS")
+        self.assertTrue(self.answer(self.bob, selected_cards=["island_001"]))
+        self.assertIn({"id": "island_001", "tapped": True}, self.bob.battlefield)
 
 
 if __name__ == "__main__":

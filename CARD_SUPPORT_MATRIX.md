@@ -27,12 +27,12 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Ponder | ponder | Sorcery | Top-three reorder/shuffle/draw | PARTIAL | — | Draw exists; MTGNP has no private reorder/optional-shuffle request or response |
 | Negate | negate | Instant | Counter noncreature spell | COMPLETE | `test_cancel_and_negate_counter_through_cast_stack_path` | Resolution restriction uses the same authoritative validator |
 | Mana Leak | mana_leak | Instant | Counter unless controller pays 3 | PARTIAL | — | Existing server auto-decision is insufficient; MTGNP has no affected-player payment response |
-| Merfolk Looter | merfolk_looter | Creature | Tap: draw then discard | MISSING | — | Ability resolution and mandatory discard decision absent |
+| Merfolk Looter | merfolk_looter | Creature | Tap: draw then discard | COMPLETE | `test_merfolk_looter_draws_then_privately_selects_discard` | Private discard uses CARD_CHOICE_REQUEST |
 | Prodigal Sorcerer | prodigal_sorcerer | Creature | Tap: 1 damage | COMPLETE | `test_prodigal_sorcerer_activated_ability_resolution` | — |
 | Air Elemental | air_elemental | Creature | Flying | COMPLETE | `test_flying_reach_and_protection_legality` | — |
 | Phantasmal Bear | phantasmal_bear | Creature | Sacrifice when targeted | COMPLETE | `test_real_trigger_orchestration_phantasmal_bear` | — |
 | Giant Growth | giant_growth | Instant | Temporary +3/+3 | COMPLETE | `test_giant_growth_cast_resolution_and_cleanup` | — |
-| Rampant Growth | rampant_growth | Sorcery | Basic-land search tapped/shuffle | MISSING | — | MTGNP CAST_SPELL has no library-card selection field |
+| Rampant Growth | rampant_growth | Sorcery | Basic-land search tapped/shuffle | COMPLETE | `test_rampant_growth_selects_basic_tapped_and_shuffles` | Private search uses CARD_CHOICE_REQUEST |
 | Naturalize | naturalize | Instant | Destroy artifact/enchantment | COMPLETE | `test_naturalize_e2e` | — |
 | Vines of Vastwood | vines_of_vastwood | Instant | Target restriction; Kicker buff | COMPLETE | `test_vines_normal_kicked_invalid_insufficient_and_cleanup` | Kicker is inferred from exact documented mana_payment; no PDU field added |
 | Llanowar Elves | llanowar_elves | Creature | Tap: add green | COMPLETE | `test_elves_are_implicit_green_sources_with_tap_and_sickness_rules` | Mana abilities are implicit under MTGNP |
@@ -42,18 +42,18 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Troll Ascetic | troll_ascetic | Creature | Hexproof; regenerate | COMPLETE | `test_troll_hexproof_rejects_opponent_target_but_allows_controller`, `test_troll_regeneration_shield_prevents_lethal_sba_once` | — |
 | Wall of Stone | wall_of_stone | Creature | Defender | COMPLETE | `test_defender_and_vigilance_combat` | — |
 | Swords to Plowshares | swords_to_plowshares | Instant | Exile creature; controller gains power | COMPLETE | `test_swords_exiles_and_gains_effective_power` | — |
-| Path to Exile | path_to_exile | Instant | Exile; optional basic-land search | MISSING | — | MTGNP has no optional-search response or library-card selection field |
+| Path to Exile | path_to_exile | Instant | Exile; optional basic-land search | COMPLETE | `test_path_exiles_then_affected_controller_may_search` | Chained private YES_NO and SELECT_CARDS choices |
 | Healing Salve | healing_salve | Instant | Modal gain/prevent damage | MISSING | — | MTGNP CAST_SPELL has no mode/prevention-target field and no modal-choice response |
 | Pacifism | pacifism | Enchantment | Aura; cannot attack/block | COMPLETE | `test_pacifism_attaches_and_prevents_attacking`, `test_pacifism_prevents_blocking` | Orphaned Aura cleanup is enforced by SBA |
 | White Knight | white_knight | Creature | First strike; protection black | COMPLETE | `test_flying_reach_and_protection_legality`, `test_first_and_double_strike_damage_windows` | — |
 | Serra Angel | serra_angel | Creature | Flying; Vigilance | COMPLETE | `test_flying_reach_and_protection_legality`, `test_defender_and_vigilance_combat` | — |
 | Savannah Lions | savannah_lions | Creature | Vanilla creature | NO SPECIAL ENGINE WORK REQUIRED | `test_combat_damage_result_precedes_state_and_priority` | Generic creature/combat path |
-| Mother of Runes | mother_of_runes | Creature | Tap: temporary protection choice | MISSING | — | MTGNP ACTIVATE_ABILITY has no chosen-color field |
+| Mother of Runes | mother_of_runes | Creature | Tap: temporary protection choice | COMPLETE | `test_mother_color_choice_and_cleanup` | COLOR choice is validated against the fixed five-color enum |
 | Dark Ritual | dark_ritual | Instant | Add BBB | COMPLETE | `test_dark_ritual_mana_is_spendable_by_normal_cast_path` | MTGNP does not specify intermediate mana-pool expiry |
 | Terror | terror | Instant | Restricted destroy; no regeneration | COMPLETE | `test_terror_and_doom_blade_cast_restrictions_and_resolution`, `test_terror_and_incinerate_honor_no_regeneration` | — |
 | Doom Blade | doom_blade | Instant | Destroy nonblack creature | COMPLETE | `test_terror_and_doom_blade_cast_restrictions_and_resolution` | — |
 | Raise Dead | raise_dead | Sorcery | Creature graveyard to hand | COMPLETE | `test_raise_dead_cast_resolution` | — |
-| Mind Rot | mind_rot | Sorcery | Target player discards two | MISSING | — | MTGNP DISCARD is Cleanup-only; no in-game hidden-card choice request exists |
+| Mind Rot | mind_rot | Sorcery | Target player discards two | COMPLETE | `test_mind_rot_target_selects_exact_available_count` | Target player receives private SELECT_CARDS choice |
 | Gray Merchant of Asphodel | gray_merchant | Creature | Devotion drain ETB | COMPLETE | `test_real_trigger_orchestration_gray_merchant` | — |
 | Gravedigger | gravedigger | Creature | Target creature return ETB | COMPLETE | `test_gravedigger_trigger_choice_persistence` | — |
 | Royal Assassin | royal_assassin | Creature | Tap: destroy tapped creature | COMPLETE | `test_repeatable_artifact_and_assassin_abilities_use_full_activation_path` | — |
@@ -65,9 +65,9 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 
 ## Current totals
 
-- COMPLETE: 40
+- COMPLETE: 45
 - PARTIAL: 4
-- MISSING: 6
+- MISSING: 1
 - NO SPECIAL ENGINE WORK REQUIRED: 8
 - Total: 58
 
