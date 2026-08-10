@@ -58,10 +58,3 @@ Execute the entire test suite across unit, domain engine, GUI, and real-socket i
 ```bash
 python -m pytest tests/ -v
 ```
-
----
-
-## 👥 Work Distribution & AI Usage Disclosure
-
-- **Architecture & Refactoring**: Core application structure (`app/`), connection management, PDU framing, and PDU dispatchers.
-- **AI Coding Assistance**: Developed with Antigravity AI pair programmer for protocol validation, PySide6 GUI integration, master card catalog reconciliation, State-Based Action loops, and comprehensive regression test coverage.
