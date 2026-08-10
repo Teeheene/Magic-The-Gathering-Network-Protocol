@@ -1,3 +1,5 @@
+import json
+import struct
 import unittest
 from unittest.mock import MagicMock
 
@@ -67,6 +69,15 @@ class CardChoiceFixture(unittest.TestCase):
             **fields,
         })
 
+    @staticmethod
+    def sent_pdus(client):
+        pdus = []
+        for call in client.sock.sendall.call_args_list:
+            framed = call.args[0]
+            size = struct.unpack(">I", framed[:4])[0]
+            pdus.append(json.loads(framed[4:4 + size].decode("utf-8")))
+        return pdus
+
     def test_client_tracks_independent_choice_token_and_builds_response(self):
         state = ClientState("alice")
         connection = MagicMock()
@@ -117,6 +128,40 @@ class CardChoiceFixture(unittest.TestCase):
             "type": "PING", "seq_num": 7, "timestamp": 1,
         }))
 
+    def test_pong_latest_sequence_controls_concede_while_choice_pending(self):
+        self.request()
+        self.game.pdu_dispatcher.handle(self.alice, {
+            "type": "PING", "seq_num": 7, "timestamp": 1,
+        })
+        self.assertEqual(self.alice.last_sent_pdu_seq_num, 7)
+        self.assertTrue(self.game.pdu_dispatcher.handle(self.alice, {
+            "type": "CONCEDE", "seq_num": 7, "player_id": "alice",
+        }))
+
+    def test_stale_choice_token_rejected_and_rematch_clears_pending_state(self):
+        request = self.request()
+        self.assertFalse(self.game.pdu_dispatcher.handle(self.alice, {
+            "type": "CARD_CHOICE_RESPONSE", "seq_num": request["seq_num"] - 1,
+            "player_id": "alice", "selected_cards": ["a"],
+        }))
+        self.assertIsNotNone(self.alice.pending_card_choice)
+        self.alice.deck_list = [f"mountain_{i:03d}" for i in range(1, 21)]
+        self.bob.deck_list = [f"forest_{i:03d}" for i in range(1, 21)]
+        self.game.game_setup()
+        self.assertIsNone(self.alice.pending_card_choice)
+        self.assertIsNone(self.alice.active_card_choice_seq_num)
+
+    def test_choice_completion_emits_one_stack_resolve_and_resumes_once(self):
+        self.alice.hand = ["shock_001"]
+        self.alice.library = ["island_001"]
+        self.resolve_item("merfolk_looter_001", item_type="ABILITY")
+        self.answer(self.alice, selected_cards=["island_001"])
+        pdus = self.sent_pdus(self.alice)
+        self.assertEqual(sum(pdu["type"] == "STACK_RESOLVE" for pdu in pdus), 1)
+        self.assertEqual(sum(pdu["type"] == "CARD_CHOICE_REQUEST" for pdu in pdus), 1)
+        self.assertEqual(sum(pdu["type"] == "GAME_STATE_UPDATE" for pdu in pdus), 1)
+        self.assertIsNotNone(self.alice.active_priority_seq_num)
+
     def test_merfolk_looter_draws_then_privately_selects_discard(self):
         self.alice.hand = ["shock_001"]
         self.alice.library = ["island_001"]
@@ -136,6 +181,18 @@ class CardChoiceFixture(unittest.TestCase):
         self.assertEqual(self.bob.hand, ["forest_001"])
         self.assertIn("mind_rot_001", self.alice.graveyard)
 
+        for hand in ([], ["island_002"]):
+            with self.subTest(hand_size=len(hand)):
+                self.bob.hand = list(hand)
+                self.bob.graveyard = []
+                self.resolve_item("mind_rot_002", targets=["bob"])
+                if hand:
+                    self.assertEqual(self.bob.pending_card_choice["min_choices"], 1)
+                    self.answer(self.bob, selected_cards=hand)
+                    self.assertEqual(self.bob.graveyard, hand)
+                else:
+                    self.assertIsNone(self.bob.pending_card_choice)
+
     def test_mother_color_choice_and_cleanup(self):
         target = {"id": "grizzly_bears_001", "keywords": []}
         self.alice.battlefield = [target]
@@ -153,6 +210,9 @@ class CardChoiceFixture(unittest.TestCase):
         self.assertTrue(self.answer(self.alice, selected_cards=["forest_001"]))
         self.assertIn({"id": "forest_001", "tapped": True}, self.alice.battlefield)
         self.assertNotIn("forest_001", self.alice.library)
+        self.alice.library = ["shock_001"]
+        self.resolve_item("rampant_growth_002")
+        self.assertIsNone(self.alice.pending_card_choice)
 
     def test_path_exiles_then_affected_controller_may_search(self):
         creature = {"id": "grizzly_bears_001", "keywords": []}
@@ -165,6 +225,12 @@ class CardChoiceFixture(unittest.TestCase):
         self.assertEqual(self.bob.pending_card_choice["choice_type"], "SELECT_CARDS")
         self.assertTrue(self.answer(self.bob, selected_cards=["island_001"]))
         self.assertIn({"id": "island_001", "tapped": True}, self.bob.battlefield)
+
+        creature2 = {"id": "grizzly_bears_002", "keywords": []}
+        self.bob.battlefield.append(creature2)
+        self.resolve_item("path_to_exile_002", targets=[creature2["id"]])
+        self.answer(self.bob, answer=False)
+        self.assertIsNone(self.bob.pending_card_choice)
 
     def test_ponder_orders_privately_then_optionally_shuffles_and_draws(self):
         self.alice.library = ["island_001", "shock_001", "forest_001", "mountain_001"]
@@ -198,6 +264,16 @@ class CardChoiceFixture(unittest.TestCase):
         self.resolve_item("ponder_002")
         self.assertIsNone(self.alice.pending_card_choice)
         self.assertEqual(self.alice.hand, [])
+
+    def test_ponder_shuffle_path_uses_authoritative_rng(self):
+        self.alice.library = ["island_001", "forest_001", "shock_001"]
+        self.game.rng = MagicMock()
+        self.game.rng.shuffle.side_effect = lambda cards: cards.reverse()
+        self.resolve_item("ponder_003")
+        self.answer(self.alice, ordered_cards=["island_001", "forest_001", "shock_001"])
+        self.answer(self.alice, answer=True)
+        self.game.rng.shuffle.assert_called_once()
+        self.assertEqual(self.alice.hand, ["shock_001"])
 
     def test_mana_leak_target_controller_decides_and_exact_payment_is_authoritative(self):
         target = {

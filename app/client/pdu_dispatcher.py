@@ -104,6 +104,8 @@ class PduDispatcher:
         self.state.priority_holder = pdu.get("player_id")
 
     def handle_stack_push(self, pdu):
+        self.state.pending_card_choice = None
+        self.state.card_choice_seq_num = None
         stack_item = {
             key: deepcopy(value)
             for key, value in pdu.items()
@@ -124,6 +126,8 @@ class PduDispatcher:
         self.state.pending_card_choice = deepcopy(pdu)
 
     def handle_stack_resolve(self, pdu):
+        self.state.pending_card_choice = None
+        self.state.card_choice_seq_num = None
         stack_item_id = pdu.get("stack_item_id")
         self.state.stack = [
             item for item in self.state.stack
