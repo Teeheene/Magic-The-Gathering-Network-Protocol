@@ -38,6 +38,9 @@ class PduDispatcher:
                 f"Unknown PDU type: {pdu_type}"
             )
         handler(pdu)
+        callback = getattr(self.state, "on_state_change", None)
+        if callable(callback):
+            callback()
 
     #receive pdus
     def handle_game_state_update(self, pdu):

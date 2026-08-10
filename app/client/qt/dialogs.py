@@ -91,3 +91,53 @@ class TriggerChoiceDialog(QDialog):
         if item:
             self.selected_option = item.text()
             self.accept()
+
+
+class CardChoiceDialog(QDialog):
+    """Generic private CARD_CHOICE_REQUEST editor with fixed protocol semantics."""
+
+    def __init__(self, request, parent=None):
+        super().__init__(parent)
+        self.request = request
+        self.result = {}
+        self.setWindowTitle(request.get("choice_type", "Card Choice").replace("_", " "))
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(request.get("prompt", "Choose")))
+        self.list_widget = QListWidget()
+        choice_type = request.get("choice_type")
+        options = request.get("options", [])
+        if choice_type in {"SELECT_CARDS", "SELECT_TARGETS", "ORDER_CARDS"}:
+            self.list_widget.setSelectionMode(
+                QListWidget.MultiSelection if choice_type != "ORDER_CARDS" else QListWidget.SingleSelection
+            )
+            for option in options:
+                self.list_widget.addItem(str(option))
+            layout.addWidget(self.list_widget)
+        elif choice_type == "COLOR":
+            for option in options:
+                self.list_widget.addItem(str(option))
+            layout.addWidget(self.list_widget)
+        self.yes_btn = QPushButton("YES / CAST / PAY")
+        self.no_btn = QPushButton("NO / DECLINE")
+        self.yes_btn.clicked.connect(lambda: self.accept_answer(True))
+        self.no_btn.clicked.connect(lambda: self.accept_answer(False))
+        layout.addWidget(self.yes_btn)
+        layout.addWidget(self.no_btn)
+
+    def accept_answer(self, affirmative):
+        kind = self.request.get("choice_type")
+        if kind in {"SELECT_CARDS", "SELECT_TARGETS"}:
+            values = [item.text() for item in self.list_widget.selectedItems()]
+            self.result = {"selected_cards" if kind == "SELECT_CARDS" else "selected_targets": values}
+        elif kind == "ORDER_CARDS":
+            self.result = {"ordered_cards": [self.list_widget.currentItem().text()] if self.list_widget.currentItem() else []}
+        elif kind == "COLOR":
+            item = self.list_widget.currentItem()
+            self.result = {"color": item.text() if item else ""}
+        elif kind == "MADNESS_CAST":
+            self.result = {"cast": affirmative}
+        elif kind == "PAY_MANA":
+            self.result = {"pay": affirmative}
+        else:
+            self.result = {"answer": affirmative}
+        self.accept()

@@ -52,6 +52,7 @@ class ClientState:
         self.last_pong_timestamp = None
         self.is_game_over = False
         self.game_over_info = None
+        self.on_state_change = None
 
     def update_game_state(self, state_dict):
         self.current_state = state_dict
