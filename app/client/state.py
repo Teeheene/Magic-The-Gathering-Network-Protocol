@@ -23,6 +23,7 @@ class ClientState:
         self.battlefield = {}
         self.graveyard = {}
         self.stack = []
+        self.suspended_cards = []
         self.land_played_this_turn = False
         self.attackers = []
         self.blockers = []
@@ -83,6 +84,7 @@ class ClientState:
         self.battlefield = {}
         self.graveyard = {}
         self.stack = []
+        self.suspended_cards = []
         self.land_played_this_turn = False
         self.attackers = []
         self.blockers = []

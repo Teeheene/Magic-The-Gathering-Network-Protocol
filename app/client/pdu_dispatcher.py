@@ -66,6 +66,7 @@ class PduDispatcher:
             "battlefield",
             "graveyard",
             "stack",
+            "suspended_cards",
             "land_played_this_turn",
             "attackers",
             "blockers",
@@ -302,13 +303,12 @@ class PduDispatcher:
         }
         self.connection.send(pdu)
 
-    def send_suspend_card(self, card_id, mana_payment, targets=None):
+    def send_suspend_card(self, card_id, mana_payment):
         self.connection.send({
             "type": "SUSPEND_CARD",
             "seq_num": self._priority_seq_num(),
             "player_id": self.state.pid,
             "card_id": card_id,
-            "targets": list(targets or []),
             "mana_payment": dict(mana_payment or {}),
         })
 

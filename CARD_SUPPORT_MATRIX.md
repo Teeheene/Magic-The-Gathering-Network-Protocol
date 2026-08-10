@@ -15,7 +15,7 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Flame Slash | flame_slash | Sorcery | 4 damage to creature | COMPLETE | `test_flame_slash_e2e` | — |
 | Searing Spear | searing_spear | Instant | 3 damage to any target | COMPLETE | `test_burn_family_normal_cast_resolution` | — |
 | Skullcrack | skullcrack | Instant | Damage; stop life gain/prevention | COMPLETE | `test_skullcrack_blocks_swords_life_gain`, `test_skullcrack_sets_both_turn_restrictions_and_cleanup` | — |
-| Rift Bolt | rift_bolt | Sorcery | Normal cast; Suspend | PARTIAL | `test_burn_family_normal_cast_resolution` | Normal cast works; Suspend is not wire-representable because CAST_SPELL has no cast-vs-suspend discriminator or time-counter lifecycle |
+| Rift Bolt | rift_bolt | Sorcery | Normal cast; Suspend | COMPLETE | `test_burn_family_normal_cast_resolution`, `test_rift_bolt_suspend_from_hand_through_upkeep_cast_and_resolution` | SUSPEND_CARD plus upkeep SELECT_TARGETS lifecycle |
 | Incinerate | incinerate | Instant | Damage; stop regeneration | COMPLETE | `test_terror_and_incinerate_honor_no_regeneration` | — |
 | Goblin Guide | goblin_guide | Creature | Haste; attack trigger | COMPLETE | `test_real_trigger_orchestration_goblin_guide` | — |
 | Goblin Bushwhacker | goblin_bushwhacker | Creature | Kicker ETB team buff/haste | COMPLETE | `test_bushwhacker_exact_normal_and_kicked_payments_and_cleanup`, `test_bushwhacker_rejects_intermediate_extra_and_insufficient_payment` | Kicker is inferred from exact documented mana_payment; no PDU field added |
@@ -65,8 +65,8 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 
 ## Current totals
 
-- COMPLETE: 48
-- PARTIAL: 2
+- COMPLETE: 49
+- PARTIAL: 1
 - MISSING: 0
 - NO SPECIAL ENGINE WORK REQUIRED: 8
 - Total: 58

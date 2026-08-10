@@ -22,7 +22,7 @@ ERR_TRIGGER_CHOICE_INVALID = "TRIGGER_CHOICE_INVALID"
 ERR_CARD_CHOICE_INVALID = "CARD_CHOICE_INVALID"
 
 CARD_CHOICE_TYPES = {
-    "SELECT_CARDS", "ORDER_CARDS", "YES_NO", "COLOR", "PAY_MANA", "MADNESS_CAST",
+    "SELECT_CARDS", "SELECT_TARGETS", "ORDER_CARDS", "YES_NO", "COLOR", "PAY_MANA", "MADNESS_CAST",
 }
 
 MSG_DECK_TOO_LARGE = "Deck contains {count} cards; maximum is 50."
@@ -47,6 +47,7 @@ class PduDispatcher:
             "TRIGGER_ORDER_RESPONSE": self.handle_trigger_order_response,
             "TRIGGER_CHOICE_RESPONSE": self.handle_trigger_choice_response,
             "CARD_CHOICE_RESPONSE": self.handle_card_choice_response,
+            "SUSPEND_CARD": self.handle_suspend_card,
             "DECLARE_ATTACKERS": self.handle_declare_attackers,
             "DECLARE_BLOCKERS": self.handle_declare_blockers,
             "ASSIGN_DAMAGE_ORDER": self.handle_assign_damage_order,
@@ -96,6 +97,31 @@ class PduDispatcher:
         if callable(continuation):
             return continuation(normalized)
         return True
+
+    def handle_suspend_card(self, client, pdu):
+        if not self._validate_priority_action(client, pdu):
+            return False
+        card_id = pdu.get("card_id")
+        payment = self.server.normalize_mana_payment(pdu.get("mana_payment"))
+        if pdu.get("player_id") != client.pid or card_id not in client.hand:
+            return self.send_error(client, "Invalid suspended card or player.", ERR_ILLEGAL_ACTION, pdu)
+        if self.server.base_card_id(card_id) != "rift_bolt":
+            return self.send_error(client, "This card has no supported Suspend action.", ERR_ILLEGAL_ACTION, pdu)
+        if client.pid != self.server.active_player or self.server.phase not in {"PRECOMBAT_MAIN", "POSTCOMBAT_MAIN"} or self.server.stack:
+            return self.send_error(client, "Suspend timing is not legal.", ERR_WRONG_PHASE, pdu)
+        if payment != {"R": 1}:
+            return self.send_error(client, "Suspend requires exact payment {R}.", ERR_INSUFFICIENT_MANA, pdu)
+        plan = self.server.plan_mana_payment(client, payment)
+        if plan is None:
+            return self.send_error(client, "Insufficient mana for Suspend.", ERR_INSUFFICIENT_MANA, pdu)
+        self.server.commit_mana_payment(client, plan)
+        client.hand.remove(card_id)
+        client.exile.append(card_id)
+        self.server.suspended_cards.append({"card_id": card_id, "owner": client.pid, "time_counters": 1})
+        self.server.consecutive_priority_passes = 0
+        self.server.pdu_dispatcher._broadcast_game_state()
+        self.server.priority_holder = client.pid
+        return self.server.grant_priority(client.pid)
 
     def build_error(self, message: str, code: str, pdu):
         seq_num = pdu.get("seq_num") if isinstance(pdu, dict) and isinstance(pdu.get("seq_num"), int) else getattr(self.server, "seq_num", 0)

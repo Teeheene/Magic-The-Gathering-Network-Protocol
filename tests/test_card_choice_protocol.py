@@ -254,6 +254,45 @@ class CardChoiceFixture(unittest.TestCase):
         self.assertTrue(self.game.pdu_dispatcher.handle_cast_spell(self.alice, good))
         self.assertEqual(self.game.stack[-1]["mode"], "GAIN_LIFE")
 
+    def test_rift_bolt_suspend_from_hand_through_upkeep_cast_and_resolution(self):
+        self.alice.hand = ["rift_bolt_001"]
+        self.alice.battlefield = [{"id": "mountain_001", "tapped": False}]
+        self.assertTrue(self.game.pdu_dispatcher.handle(self.alice, {
+            "type": "SUSPEND_CARD", "seq_num": 10, "player_id": "alice",
+            "card_id": "rift_bolt_001", "mana_payment": {"R": 1},
+        }))
+        self.assertNotIn("rift_bolt_001", self.alice.hand)
+        self.assertIn("rift_bolt_001", self.alice.exile)
+        self.assertEqual(self.game.suspended_cards[0]["time_counters"], 1)
+
+        self.game.upkeep()
+        self.assertEqual(self.alice.pending_card_choice["choice_type"], "SELECT_TARGETS")
+        self.assertIsNone(self.game.priority_holder)
+        self.answer(self.alice, selected_targets=["bob"])
+        self.assertNotIn("rift_bolt_001", self.alice.exile)
+        self.assertEqual(self.game.stack[-1]["source"], "rift_bolt_001")
+        self.assertTrue(self.game.stack[-1]["suspended"])
+        self.game.resolve_top_stack_item()
+        self.assertEqual(self.bob.life_total, 17)
+        self.assertIn("rift_bolt_001", self.alice.graveyard)
+
+    def test_suspend_rejects_wrong_card_cost_and_timing(self):
+        self.alice.hand = ["rift_bolt_002", "shock_001"]
+        self.alice.battlefield = [{"id": "mountain_001", "tapped": False}]
+        common = {"type": "SUSPEND_CARD", "seq_num": 10, "player_id": "alice"}
+        self.assertFalse(self.game.pdu_dispatcher.handle(self.alice, {
+            **common, "card_id": "shock_001", "mana_payment": {"R": 1},
+        }))
+        self.game.priority_holder = "alice"
+        self.assertFalse(self.game.pdu_dispatcher.handle(self.alice, {
+            **common, "card_id": "rift_bolt_002", "mana_payment": {"R": 2},
+        }))
+        self.game.priority_holder = "alice"
+        self.game.phase = "BEGIN_COMBAT"
+        self.assertFalse(self.game.pdu_dispatcher.handle(self.alice, {
+            **common, "card_id": "rift_bolt_002", "mana_payment": {"R": 1},
+        }))
+
 
 if __name__ == "__main__":
     unittest.main()

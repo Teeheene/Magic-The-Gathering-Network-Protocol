@@ -49,6 +49,7 @@ class Game:
         self.trigger_manager = TriggerManager(self, self.card_catalog)
         self.cant_gain_life_this_turn = False
         self.cant_prevent_damage_this_turn = False
+        self.suspended_cards = []
         for client in getattr(self, "clients", []):
             client.ready_in_lobby = False
 
@@ -71,6 +72,7 @@ class Game:
         self.attackers_declared = False
         self.blockers_declared = False
         self.next_stack_item_id = 1
+        self.suspended_cards = []
         self.game_over = False
 
         rng = getattr(self, "rng", random)
@@ -696,7 +698,48 @@ class Game:
         return self.broadcast_game_state()
 
     def upkeep(self):
-        return self.enter_priority_phase("UPKEEP")
+        if not self.transition_phase("UPKEEP"):
+            return False
+        due = [entry for entry in self.suspended_cards if entry["owner"] == self.active_player]
+        for entry in due:
+            entry["time_counters"] -= 1
+            if entry["time_counters"] > 0:
+                continue
+            owner = self.client_for_player(entry["owner"])
+            options = [client.pid for client in self.clients]
+            options.extend(
+                permanent.get("id")
+                for client in self.clients for permanent in client.battlefield
+                if isinstance(permanent, dict) and "creature" in (self.card_data(permanent.get("id", "")) or {}).get("card_type", "").casefold()
+            )
+            def validate_target(pdu, legal=list(options)):
+                selected = pdu.get("selected_targets")
+                return list(selected) if isinstance(selected, list) and len(selected) == 1 and selected[0] in legal else None
+            def cast_suspended(selected, suspended=entry, suspended_owner=owner):
+                self.suspended_cards.remove(suspended)
+                suspended_owner.exile.remove(suspended["card_id"])
+                stack_item = {
+                    "stack_item_id": self.pdu_dispatcher._next_stack_item_id(),
+                    "item_type": "SPELL", "source": suspended["card_id"],
+                    "controller": suspended_owner.pid, "targets": selected,
+                    "mana_payment": {}, "suspended": True,
+                }
+                self.stack.append(stack_item)
+                self.pdu_dispatcher.broadcast_stack_push(stack_item)
+                self.priority_holder = self.active_player
+                events = [GameEvent("spell_cast", {"card_id": suspended["card_id"], "controller": suspended_owner.pid, "targets": selected})]
+                events.append(GameEvent("became_target", {"target_id": selected[0], "source": suspended["card_id"], "controller": suspended_owner.pid}))
+                return self.post_event(events)
+            self.pdu_dispatcher.send_card_choice_request(
+                owner, entry["card_id"], "SELECT_TARGETS", "Choose a target for suspended Rift Bolt.",
+                1, 1, options, validator=validate_target, continuation=cast_suspended,
+            )
+            return False
+        self.priority_holder = self.active_player
+        self.consecutive_priority_passes = 0
+        if not self.broadcast_game_state():
+            return False
+        return self.grant_priority(self.active_player)
 
     def draw(self):
         if not self.transition_phase("DRAW"):
