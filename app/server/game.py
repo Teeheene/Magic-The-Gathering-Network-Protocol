@@ -1,15 +1,21 @@
+import json
 import select
 import random
 import re
+import time
 from collections import Counter
 from pathlib import Path
+from typing import Optional
 
 from app.server.pdu_dispatcher import PduDispatcher
 from app.server.game_state import StateBuilder
 from app.shared.card_catalog import CardCatalog
-
+from app.server.engine.triggers import EventBus, TriggerManager, GameEvent
+from app.server.engine.sba import StateBasedActions
+from app.server.engine.effects import CardEffects
 
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "shared" / "card_catalog.json"
+
 
 
 class Game:
@@ -37,8 +43,15 @@ class Game:
         self.pending_damage_orders = set()
         self.attackers_declared = False
         self.blockers_declared = False
+        self.pending_event_continuation = None
         self.next_stack_item_id = 1
-        self.game_over = False
+        self.event_bus = EventBus()
+        self.trigger_manager = TriggerManager(self, self.card_catalog)
+        self.cant_gain_life_this_turn = False
+        for client in getattr(self, "clients", []):
+            client.ready_in_lobby = False
+
+
 
     def game_setup(self):
         """Initialize a fresh match before players begin mulligans."""
@@ -62,7 +75,8 @@ class Game:
         rng = getattr(self, "rng", random)
         self.active_player = rng.choice(self.clients).pid
         for client in self.clients:
-            deck = list(client.deck_list)
+            deck_cards = getattr(client, "deck_list", getattr(client, "deck", []))
+            deck = list(deck_cards)
             rng.shuffle(deck)
             client.hand = deck[:7]
             client.library = deck[7:]
@@ -120,12 +134,74 @@ class Game:
             for item in self.stack
         )
 
-    def targets_are_legal(self, card_id, targets):
+    def targets_are_legal(self, card_id, targets, is_ability=False):
         card_data = self.card_data(card_id) or {}
-        requires_target = "target" in card_data.get("text", "").casefold()
+        card_type = card_data.get("card_type", "").casefold()
+        text = card_data.get("text", "").casefold()
+
+        # Non-Aura permanents do not target on cast
+        if not is_ability and ("creature" in card_type or "artifact" in card_type or "enchantment" in card_type or "land" in card_type):
+            return not targets
+
+        requires_target = "target" in text
         if not requires_target:
             return not targets
-        return len(targets) == 1 and self.target_exists(targets[0])
+        if len(targets) != 1:
+            return False
+
+        target_id = targets[0]
+        base_id = self.base_card_id(card_id)
+
+        # Counterspells: target must be on stack
+        if base_id in {"counterspell", "cancel", "mana_leak", "negate"}:
+            stack_item = next(
+                (item for item in self.stack if item.get("stack_item_id") == target_id),
+                None,
+            )
+            if stack_item is None:
+                return False
+            if base_id == "negate":
+                target_source_id = stack_item.get("source", "")
+                target_card_data = self.card_data(target_source_id) or {}
+                if "creature" in target_card_data.get("card_type", "").casefold():
+                    return False
+            return True
+
+        # Player-only targets
+        if base_id in {"lava_spike", "millstone"} or "target player" in text:
+            return self.client_for_player(target_id) is not None
+
+        # Creature-only targets
+        if base_id in {"flame_slash", "unsummon", "royal_assassin"} or "target creature" in text:
+            owner, permanent = self.find_permanent(target_id)
+            if permanent is None or not isinstance(permanent, dict):
+                return False
+            perm_data = self.card_data(permanent.get("id", "")) or {}
+            if "creature" not in perm_data.get("card_type", "").casefold() and permanent.get("toughness") is None:
+                return False
+            if base_id == "royal_assassin":
+                if not permanent.get("tapped"):
+                    return False
+            if base_id == "terror":
+                if "artifact" in perm_data.get("card_type", "").casefold() or perm_data.get("color") == "B":
+                    return False
+            if base_id == "doom_blade":
+                if perm_data.get("color") == "B":
+                    return False
+            return True
+
+        # Artifact / Enchantment targets
+        if base_id == "naturalize":
+            owner, permanent = self.find_permanent(target_id)
+            if permanent is None or not isinstance(permanent, dict):
+                return False
+            perm_data = self.card_data(permanent.get("id", "")) or {}
+            perm_type = perm_data.get("card_type", "").casefold()
+            return "artifact" in perm_type or "enchantment" in perm_type
+
+        return self.target_exists(target_id)
+
+
 
     @staticmethod
     def normalize_mana_payment(payment):
@@ -150,6 +226,33 @@ class Game:
         if card_data is None:
             return None
         return self.normalize_mana_payment(card_data.get("mana_cost", {}))
+
+    def register_priority_pass(self, client):
+        next_client = self.other_client(client)
+        if next_client is None:
+            return self.pdu_dispatcher.send_error(
+                client,
+                "Cannot pass priority without another connected player.",
+                "ILLEGAL_ACTION"
+            )
+
+        self.consecutive_priority_passes = (
+            getattr(self, "consecutive_priority_passes", 0) + 1
+        )
+        if self.consecutive_priority_passes >= 2:
+            self.consecutive_priority_passes = 0
+            self.priority_holder = None
+            if self.stack:
+                return self.resolve_top_stack_item()
+            return self.advance_phase()
+
+        self.priority_holder = next_client.pid
+        self.pdu_dispatcher._broadcast_game_state()
+        self.pdu_dispatcher.send_priority_grant(
+            next_client,
+            self.priority_holder
+        )
+        return True
 
     def ability_cost(self, source_id):
         card_data = self.card_data(source_id) or {}
@@ -260,7 +363,11 @@ class Game:
         targets = stack_item.get("targets", [])
         target_id = targets[0] if targets else None
 
+        if targets and not self.targets_are_legal(source_id, targets):
+            return "FIZZLE", []
+
         damage_amounts = {
+
             "lightning_bolt": 3,
             "shock": 2,
             "lava_spike": 3,
@@ -416,6 +523,8 @@ class Game:
                 return False
 
         while not all(client.mulligan_kept for client in self.clients):
+            if getattr(self, "game_over", False):
+                return False
             waiting_clients = {
                 client.sock: client
                 for client in self.clients
@@ -432,7 +541,9 @@ class Game:
                     self.return_to_lobby(client)
                     return False
 
-                self.pdu_dispatcher.handle_mulligan_choice(client, pdu)
+                self.pdu_dispatcher.handle(client, pdu)
+                if getattr(self, "game_over", False):
+                    return False
 
         return True
 
@@ -561,6 +672,11 @@ class Game:
             for keyword in permanent.get("keywords", [])
         }
 
+    def start_combat_damage(self):
+        if self.combat_has_first_strike():
+            return self.resolve_combat_damage(True)
+        return self.resolve_combat_damage(False)
+
     def combat_has_first_strike(self):
         combat_ids = {
             attacker["creature_id"]
@@ -577,10 +693,226 @@ class Game:
                 return True
         return False
 
-    def start_combat_damage(self):
-        if self.combat_has_first_strike():
-            return self.resolve_combat_damage(True)
-        return self.resolve_combat_damage(False)
+    def post_event(self, events=None, sba_result=None):
+        """Canonical post-event pipeline per MTG rules & RFC requirements."""
+        batch_id = self.trigger_manager.generate_batch_id() if events is not None else None
+        if events is not None:
+            event_list = events if isinstance(events, list) else [events]
+            for event in event_list:
+                self.event_bus.publish(event)
+                for trg in self.trigger_manager.detect_triggers_for_event(event):
+                    trg.batch_id = trg.batch_id or batch_id
+                    self.trigger_manager.pending_triggers.append(trg)
+
+        # 1. Run State-Based Actions
+        if sba_result is None:
+            changes, game_over_info = StateBasedActions.check_and_apply(self)
+        else:
+            changes, game_over_info = sba_result
+        for change in changes:
+            if change.get("type") == "CREATURE_DIED":
+                death_event = GameEvent("creature_died", change)
+                self.event_bus.publish(death_event)
+                for trg in self.trigger_manager.detect_triggers_for_event(death_event):
+                    trg.batch_id = trg.batch_id or batch_id or self.trigger_manager.generate_batch_id()
+                    self.trigger_manager.pending_triggers.append(trg)
+
+        # Ensure all unbatched pending triggers share a single batch_id
+        unbatched = [t for t in self.trigger_manager.pending_triggers if not getattr(t, "batch_id", None)]
+        if unbatched:
+            shared_bid = self.trigger_manager.generate_batch_id()
+            for trg in unbatched:
+                trg.batch_id = shared_bid
+
+        # 2. Check Game Over
+        if game_over_info is not None:
+            winner_c = self.client_for_player(game_over_info["winner_id"])
+            loser_c = self.other_client(winner_c) if winner_c else self.clients[0] if self.clients else None
+            return self.end_game(loser_c, game_over_info["reason"])
+
+        # 3. Process Pending Triggers into stack items
+        if self.has_pending_decision():
+            self.pdu_dispatcher._broadcast_game_state()
+            return False
+
+        ap = self.active_player
+        nap = self.other_player(ap) if ap else None
+        ap_client = self.client_for_player(ap) if ap else None
+        nap_client = self.client_for_player(nap) if nap else None
+
+        # Identify distinct un-ordered batches
+        distinct_batches = []
+        for t in self.trigger_manager.pending_triggers:
+            bid = getattr(t, "batch_id", None)
+            if bid and bid not in distinct_batches:
+                distinct_batches.append(bid)
+
+        for bid in distinct_batches:
+            batch_trgs = [t for t in self.trigger_manager.pending_triggers if getattr(t, "batch_id", None) == bid]
+            ap_trgs = [t for t in batch_trgs if t.controller == ap]
+            nap_trgs = [t for t in batch_trgs if t.controller == nap]
+
+            if len(ap_trgs) > 1 and (bid, ap) not in self.trigger_manager.ordered_batches:
+                if ap_client and not getattr(ap_client, "pending_trigger_ids", None):
+                    self.pdu_dispatcher.send_trigger_order_prompt(ap_client, ap, [t.trigger_id for t in ap_trgs])
+                    self.pdu_dispatcher._broadcast_game_state()
+                    return False
+
+            if len(nap_trgs) > 1 and (bid, nap) not in self.trigger_manager.ordered_batches:
+                if nap_client and not getattr(nap_client, "pending_trigger_ids", None):
+                    self.pdu_dispatcher.send_trigger_order_prompt(nap_client, nap, [t.trigger_id for t in nap_trgs])
+                    self.pdu_dispatcher._broadcast_game_state()
+                    return False
+
+        # Sort pending triggers batch-by-batch: AP first, NAP second (on top)
+        new_pending = []
+        for bid in distinct_batches:
+            batch_trgs = [t for t in self.trigger_manager.pending_triggers if getattr(t, "batch_id", None) == bid]
+            b_ap = [t for t in batch_trgs if t.controller == ap]
+            b_nap = [t for t in batch_trgs if t.controller == nap]
+            b_other = [t for t in batch_trgs if t.controller not in (ap, nap)]
+            new_pending.extend(b_ap + b_nap + b_other)
+        remaining_unbatched = [t for t in self.trigger_manager.pending_triggers if not getattr(t, "batch_id", None)]
+        self.trigger_manager.pending_triggers = new_pending + remaining_unbatched
+
+        while self.trigger_manager.pending_triggers:
+            trg = self.trigger_manager.pending_triggers[0]
+            if trg.requires_target:
+                if trg.legal_targets:
+                    ctrl_client = self.client_for_player(trg.controller)
+                    if ctrl_client:
+                        self.pdu_dispatcher.send_trigger_choice_prompt(ctrl_client, trg)
+                        self.pdu_dispatcher._broadcast_game_state()
+                        return False
+                else:
+                    self.trigger_manager.pending_triggers.pop(0)
+                    continue
+
+            self.trigger_manager.pending_triggers.pop(0)
+            stack_item = {
+                "stack_item_id": self.pdu_dispatcher._next_stack_item_id(),
+                "item_type": "TRIGGER_ABILITY",
+                "trigger_id": trg.trigger_id,
+                "source": trg.source_id,
+                "controller": trg.controller,
+                "effect_summary": trg.effect_summary,
+                "effect_fn": trg.effect_fn
+            }
+            self.stack.append(stack_item)
+            self.pdu_dispatcher.broadcast_stack_push(stack_item)
+
+        # 4. Broadcast updated game state
+        self.pdu_dispatcher._broadcast_game_state()
+
+        continuation = self.pending_event_continuation
+        if continuation is not None:
+            self.pending_event_continuation = None
+            return continuation()
+
+        # 5. Grant priority ONLY when no mandatory decision is pending
+        if self.priority_holder and not self.has_pending_decision():
+            client = self.client_for_player(self.priority_holder)
+            if client:
+                self.pdu_dispatcher.send_priority_grant(client, self.priority_holder)
+
+        return True
+
+    def has_pending_decision(self) -> bool:
+        if bool(getattr(self, "pending_damage_orders", None)):
+            return True
+        for client in getattr(self, "clients", []):
+            if getattr(client, "pending_trigger_choice", None) is not None:
+                return True
+            if getattr(client, "pending_trigger_ids", None) is not None:
+                return True
+        return False
+
+    def other_player(self, player_id: str) -> Optional[str]:
+        for c in self.clients:
+            if c.pid != player_id:
+                return c.pid
+        return None
+
+    def resolve_top_stack_item(self):
+        if not self.stack:
+            return False
+        item = self.stack.pop()
+        item_type = item.get("item_type")
+        source_id = item.get("source", "")
+        controller = item.get("controller", "")
+        targets = item.get("targets", [])
+
+        ctrl_client = self.client_for_player(controller)
+        opp_client = self.other_client(ctrl_client) if ctrl_client else None
+        resolution_events = None
+
+        # Both passes clear the old holder. Every completed stack resolution
+        # starts a fresh priority window with the active player.
+        self.priority_holder = self.active_player
+
+        if item_type == "TRIGGER_ABILITY":
+            fn = item.get("effect_fn")
+            if callable(fn):
+                fn(item, self)
+            self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), "RESOLVED", [])
+        elif item_type == "ABILITY":
+            base_id = self.base_card_id(source_id)
+            if targets and not self.targets_are_legal(source_id, targets, is_ability=True):
+                self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), "FIZZLE", [])
+                return self.post_event()
+
+            status, changes = CardEffects.resolve_ability_effect(base_id, source_id, targets, ctrl_client, opp_client, self)
+            self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), status, changes)
+        elif item_type == "SPELL":
+            base_id = self.base_card_id(source_id)
+            if targets and not self.targets_are_legal(source_id, targets):
+                # Spell FIZZLES
+                if ctrl_client:
+                    ctrl_client.graveyard.append(source_id)
+                self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), "FIZZLE", [])
+                return self.post_event()
+
+            status, changes = CardEffects.resolve_card_effect(base_id, source_id, targets, ctrl_client, opp_client, self)
+            card_data = self.card_data(source_id) or {}
+            card_type = card_data.get("card_type", "").casefold()
+
+            if "creature" in card_type or "artifact" in card_type or "enchantment" in card_type:
+                if ctrl_client:
+                    perm = {
+                        "id": source_id,
+                        "tapped": False,
+                        "summoning_sick": "creature" in card_type,
+                        "power": card_data.get("power", 0),
+                        "toughness": card_data.get("toughness", 0),
+                        "keywords": card_data.get("keywords", []),
+                        "damage": 0
+                    }
+                    ctrl_client.battlefield.append(perm)
+                    resolution_events = GameEvent(
+                        "permanent_entered",
+                        {"creature_id": source_id, "controller": controller},
+                    )
+            else:
+                if ctrl_client:
+                    ctrl_client.graveyard.append(source_id)
+
+            self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), status, changes)
+
+        return self.post_event(resolution_events)
+
+    def get_effective_pt(self, permanent):
+        if not isinstance(permanent, dict):
+            return 0, 0
+        p = permanent.get("power", 0) + permanent.get("temp_power_buff", 0)
+        t = permanent.get("toughness", 0) + permanent.get("temp_toughness_buff", 0)
+        return max(0, p), max(0, t)
+
+    def enter_end_of_combat_after_damage(self):
+        self.priority_holder = self.active_player
+        self.consecutive_priority_passes = 0
+        if not self.transition_phase("END_OF_COMBAT"):
+            return False
+        return self.grant_priority(self.active_player)
 
     def resolve_combat_damage(self, first_strike):
         phase = "FIRST_STRIKE_DAMAGE" if first_strike else "COMBAT_DAMAGE"
@@ -592,6 +924,9 @@ class Game:
         for attacker in getattr(self, "attackers", []):
             attacker_id = attacker["creature_id"]
             _, attacker_permanent = self.find_permanent(attacker_id)
+            if not isinstance(attacker_permanent, dict):
+                continue
+
             attacker_keywords = self.permanent_keywords(attacker_permanent)
             attacker_eligible = (
                 "first strike" in attacker_keywords
@@ -600,11 +935,9 @@ class Game:
                 "first strike" not in attacker_keywords
                 or "double strike" in attacker_keywords
             )
-            attacker_power = (
-                attacker_permanent.get("power", 0)
-                if isinstance(attacker_permanent, dict)
-                else 0
-            )
+
+            attacker_power, _ = self.get_effective_pt(attacker_permanent)
+
             assigned_blockers = [
                 blocker
                 for blocker in getattr(self, "blockers", [])
@@ -627,17 +960,22 @@ class Game:
                 [blocker["creature_id"] for blocker in assigned_blockers]
             )
             remaining_damage = attacker_power if attacker_eligible else 0
-            for blocker_id in order:
+
+            for idx, blocker_id in enumerate(order):
                 _, blocker_permanent = self.find_permanent(blocker_id)
                 if not isinstance(blocker_permanent, dict):
                     continue
-                lethal = max(
-                    0,
-                    blocker_permanent.get("toughness", 0)
-                    - blocker_permanent.get("damage", 0)
-                )
-                assigned_damage = min(remaining_damage, lethal)
-                if assigned_damage:
+
+                _, b_toughness = self.get_effective_pt(blocker_permanent)
+                lethal = max(0, b_toughness - blocker_permanent.get("damage", 0))
+
+                # Final blocker receives ALL remaining attacker damage per MTGNP rules
+                if idx == len(order) - 1:
+                    assigned_damage = remaining_damage
+                else:
+                    assigned_damage = min(remaining_damage, lethal)
+
+                if assigned_damage > 0:
                     blocker_permanent["damage"] = (
                         blocker_permanent.get("damage", 0) + assigned_damage
                     )
@@ -648,10 +986,10 @@ class Game:
                         "amount": assigned_damage
                     })
 
-            if isinstance(attacker_permanent, dict):
-                for blocker in assigned_blockers:
-                    blocker_id = blocker["creature_id"]
-                    _, blocker_permanent = self.find_permanent(blocker_id)
+            for blocker in assigned_blockers:
+                blocker_id = blocker["creature_id"]
+                _, blocker_permanent = self.find_permanent(blocker_id)
+                if isinstance(blocker_permanent, dict):
                     blocker_keywords = self.permanent_keywords(blocker_permanent)
                     blocker_eligible = (
                         "first strike" in blocker_keywords
@@ -660,64 +998,45 @@ class Game:
                         "first strike" not in blocker_keywords
                         or "double strike" in blocker_keywords
                     )
-                    if blocker_eligible and isinstance(blocker_permanent, dict):
-                        damage = blocker_permanent.get("power", 0)
+                    if blocker_eligible:
+                        b_power, _ = self.get_effective_pt(blocker_permanent)
                         attacker_permanent["damage"] = (
-                            attacker_permanent.get("damage", 0) + damage
+                            attacker_permanent.get("damage", 0) + b_power
                         )
-                        if damage:
+                        if b_power > 0:
                             damage_events.append({
                                 "source": blocker_id,
                                 "target": attacker_id,
-                                "amount": damage
+                                "amount": b_power
                             })
 
-        creatures_died = self.remove_lethally_damaged_creatures()
+        sba_result = StateBasedActions.check_and_apply(self)
+        sba_changes, game_over_info = sba_result
+        creatures_died = [
+            change["card_id"]
+            for change in sba_changes
+            if change.get("type") == "CREATURE_DIED"
+        ]
         life_totals = {
             client.pid: client.life_total
             for client in self.clients
         }
-        for client in self.clients:
-            self.pdu_dispatcher.send_combat_damage_result(
-                client,
-                damage_events,
-                life_totals,
-                creatures_died
-            )
-
-        losing_client = next(
-            (client for client in self.clients if client.life_total <= 0),
-            None,
+        self.pdu_dispatcher.broadcast_combat_damage_result(
+            damage_events,
+            life_totals,
+            creatures_died,
+            game_over_info,
         )
-        if losing_client is not None:
-            return self.end_game(losing_client, "LIFE_ZERO")
-
-        if not self.broadcast_game_state():
-            return False
 
         if first_strike:
-            self.consecutive_priority_passes = 0
-            return self.grant_priority(self.active_player)
-        return self.enter_priority_phase("END_OF_COMBAT")
-
-    def remove_lethally_damaged_creatures(self):
-        creatures_died = []
-        for client in self.clients:
-            survivors = []
-            for permanent in client.battlefield:
-                lethal = (
-                    isinstance(permanent, dict)
-                    and permanent.get("toughness") is not None
-                    and permanent.get("damage", 0) >= permanent["toughness"]
-                )
-                if lethal:
-                    card_id = permanent["id"]
-                    creatures_died.append(card_id)
-                    client.graveyard.append(card_id)
-                else:
-                    survivors.append(permanent)
-            client.battlefield = survivors
-        return creatures_died
+            self.priority_holder = self.active_player
+        else:
+            self.priority_holder = None
+            self.pending_event_continuation = self.enter_end_of_combat_after_damage
+        return self.post_event(
+            GameEvent("combat_damage_dealt", {"damage_events": damage_events}),
+            sba_result=sba_result,
+        )
 
     def cleanup(self):
         self.priority_holder = None
@@ -730,17 +1049,19 @@ class Game:
         if active_client is None:
             return False
         if len(active_client.hand) > 7:
-            return True
+            return self.enter_action_phase("CLEANUP")
         return self.finish_cleanup()
 
     def finish_cleanup(self):
+
+        self.cant_gain_life_this_turn = False
         for client in self.clients:
             for permanent in client.battlefield:
                 if isinstance(permanent, dict):
                     permanent["damage"] = 0
-
-        if not self.broadcast_game_state():
-            return False
+                    permanent["temp_power_buff"] = 0
+                    permanent["temp_toughness_buff"] = 0
+                    permanent["cant_regenerate"] = False
 
         active_client = self.client_for_player(self.active_player)
         next_client = self.other_client(active_client)
@@ -754,86 +1075,46 @@ class Game:
         self.attackers_declared = False
         self.blockers_declared = False
         self.pending_damage_orders = set()
+
         if not self.handle_untap_phase():
             return False
         return self.upkeep()
 
-    def resolve_top_stack_item(self):
-        if not self.stack:
-            return False
 
-        stack_item = self.stack.pop()
-        result = "RESOLVED"
-        state_changes = []
-        if stack_item.get("item_type") == "SPELL":
-            controller = self.client_for_player(stack_item.get("controller"))
-            if controller is not None:
-                source_id = stack_item["source"]
-                card_data = self.card_data(source_id) or {}
-                card_type = card_data.get("card_type", "").casefold()
-                if any(
-                    permanent_type in card_type
-                    for permanent_type in ("creature", "artifact", "enchantment")
-                ):
-                    permanent = {"id": source_id, "tapped": False}
-                    if "creature" in card_type:
-                        permanent.update({
-                            "power": card_data.get("power", 0),
-                            "toughness": card_data.get("toughness", 0),
-                            "damage": 0,
-                            "summoning_sick": True,
-                            "keywords": list(card_data.get("keywords", [])),
-                        })
-                    controller.battlefield.append(permanent)
-                    state_changes.append({
-                        "type": "PERMANENT_ENTERS",
-                        "card_id": source_id,
-                        "controller": controller.pid,
-                        "tapped": False,
-                    })
-                else:
-                    result, state_changes = self.resolve_stack_effect(stack_item)
-                    controller.graveyard.append(source_id)
-        elif stack_item.get("item_type") == "ABILITY":
-            result, state_changes = self.resolve_stack_effect(stack_item)
 
-        creatures_died = self.remove_lethally_damaged_creatures()
-        state_changes.extend(
-            {"type": "DESTROY", "target": creature_id}
-            for creature_id in creatures_died
-        )
 
-        for client in self.clients:
-            self.pdu_dispatcher.send_stack_resolve(
-                client,
-                stack_item["stack_item_id"],
-                result,
-                state_changes
-            )
-        if not self.broadcast_game_state():
-            return False
-
-        losing_client = self.losing_player()
-        if losing_client is not None:
-            return self.end_game(losing_client, "LIFE_ZERO")
-
-        self.consecutive_priority_passes = 0
-        return self.grant_priority(self.active_player)
+    def check_priority_timeout(self) -> bool:
+        if self.priority_holder:
+            p_client = self.client_for_player(self.priority_holder)
+            if p_client and getattr(p_client, "priority_deadline", None) is not None:
+                if time.monotonic() > p_client.priority_deadline:
+                    print(f"Priority deadline expired for {p_client.pid}")
+                    self.end_game(p_client, "DISCONNECT")
+                    return True
+        return False
 
     def end_game(self, losing_client, reason):
         winning_client = self.other_client(losing_client)
         winner_id = winning_client.pid if winning_client is not None else None
+        loser_id = losing_client.pid if losing_client else None
         self.priority_holder = None
-        if not self.transition_phase("GAME_OVER"):
-            return False
+        self.transition_phase("GAME_OVER")
         self.game_over = True
-        for client in self.clients:
-            self.pdu_dispatcher.send_game_over(
-                client,
-                winner_id,
-                losing_client.pid,
-                reason
-            )
+        for client in list(self.clients):
+            client.ready_in_lobby = False
+            try:
+                self.pdu_dispatcher.send_game_over(
+                    client,
+                    winner_id,
+                    loser_id,
+                    reason
+                )
+            except (ConnectionError, OSError):
+                pass
+        if reason == "DISCONNECT":
+            self.connection.return_to_lobby(disconnected_client=losing_client)
+        else:
+            self.connection.return_to_lobby(disconnected_client=None)
         return True
 
     def run_game_loop(self):
@@ -854,8 +1135,14 @@ class Game:
             return
 
         while self.clients and not self.game_over:
+            self.connection.refuse_extra_connections()
+
+            # Check server priority deadline
+            if self.check_priority_timeout():
+                break
+
             sockets = [client.sock for client in self.clients]
-            readable, _, _ = select.select(sockets, [], [], 0.5)
+            readable, _, _ = select.select(sockets, [], [], 0.1)
 
             for ready_socket in readable:
                 client = next(
@@ -867,5 +1154,10 @@ class Game:
                     pdu = client.receive()
                     self.pdu_dispatcher.handle(client, pdu)
                 except (ConnectionError, OSError):
-                    self.return_to_lobby(client)
+                    self.end_game(client, "DISCONNECT")
                     return
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    from app.server.pdu_dispatcher import MSG_INVALID_JSON, ERR_INVALID_JSON
+                    self.pdu_dispatcher.send_error(client, MSG_INVALID_JSON, ERR_INVALID_JSON)
+
+

@@ -1,5 +1,6 @@
 import socket
 import threading
+import time
 from typing import Optional
 from app.shared.protocol import encode_pdu, decode_pdu 
 
@@ -14,9 +15,10 @@ class ClientConnection:
         self.sock = None
         self.running = False
         self.pdu_handler = None
+        self.ping_interval = 30.0
+        self.pong_timeout = 30.0
 
     def connect(self):
-        #initialize connections
         self.sock = socket.socket(
             socket.AF_INET, 
             socket.SOCK_STREAM
@@ -26,12 +28,46 @@ class ClientConnection:
         )
         self.running = True
 
-        #thread client connections
         thread = threading.Thread(
             target=self.listen,
             daemon=True
         )
         thread.start()
+
+    def start_heartbeat(self, dispatcher, ping_interval: float = 30.0, pong_timeout: float = 30.0):
+        """Start a background daemon thread that sends PING and verifies PONG correlation & timeout."""
+        self.ping_interval = ping_interval
+        self.pong_timeout = pong_timeout
+        heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            args=(dispatcher,),
+            daemon=True
+        )
+        heartbeat_thread.start()
+
+    def _heartbeat_loop(self, dispatcher):
+        dispatcher.state.last_pong_timestamp = time.time()
+        while self.running:
+            time.sleep(self.ping_interval)
+            if not self.running:
+                break
+
+            try:
+                dispatcher.send_ping()
+            except Exception:
+                self.close()
+                break
+
+            start_wait = time.time()
+            while self.running:
+                if getattr(dispatcher.state, "pending_ping_seq", None) is None:
+                    break
+                if time.time() - start_wait >= self.pong_timeout:
+                    print("Heartbeat PONG timeout exceeded. Closing connection.")
+                    self.close()
+                    return
+                time.sleep(0.05)
+
 
     def listen(self):
         while self.running:
@@ -44,6 +80,7 @@ class ClientConnection:
             except (ConnectionError, OSError):
                 print("Server Disconnected.")
                 self.running = False
+                break
         
     def send(self, pdu):
         if not self.sock:

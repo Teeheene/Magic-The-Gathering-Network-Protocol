@@ -25,6 +25,9 @@ class PduDispatcher:
         pdu_type = pdu.get("type")
         seq_num = pdu.get("seq_num")
 
+        if isinstance(seq_num, int) and not isinstance(seq_num, bool):
+            self.state.last_received_pdu_seq_num = seq_num
+
         if seq_num is not None and pdu_type != "ERROR":
             self.state.latest_seq_num = seq_num
 
@@ -46,14 +49,8 @@ class PduDispatcher:
 
         #lobby phase deals with no game setup
         if server_state.get("phase") == "LOBBY":
-            self.state.phase = "LOBBY"
+            self.state.reset_for_lobby()
             self.state.joined = False
-            self.state.active_player = None
-            self.state.priority_holder = None
-            self.state.priority_seq_num = None
-            self.state.phase_seq_num = None
-            self.state.trigger_seq_num = None
-            self.state.pending_request = None
             return
 
         remembered_fields = (
@@ -144,16 +141,42 @@ class PduDispatcher:
         self.state.last_error = deepcopy(pdu)
 
     def handle_pong(self, pdu):
-        self.state.last_pong_timestamp = pdu.get("timestamp")
+        seq = pdu.get("seq_num")
+        pending = getattr(self.state, "pending_ping_seq", None)
+        if pending is not None:
+            if seq == pending:
+                self.state.last_pong_timestamp = time.time()
+                self.state.pending_ping_seq = None
+        else:
+            self.state.last_pong_timestamp = time.time()
+
+    def send_ping(self, timestamp=None):
+        if timestamp is None:
+            timestamp = int(time.time() * 1000)
+
+        seq = self.state.heartbeat_seq_num
+        self.state.heartbeat_seq_num += 1
+        self.state.pending_ping_seq = seq
+        self.state.ping_send_time = time.time()
+
+        self.connection.send({
+            "type": "PING",
+            "seq_num": seq,
+            "timestamp": timestamp
+        })
+
 
     #send pdus
     def send_player_ready(self):
+        seq = self.state.player_ready_seq_num
+        self.state.player_ready_seq_num += 1
         self.connection.send({
             "type": "PLAYER_READY",
-            "seq_num": self.state.latest_seq_num,
+            "seq_num": seq,
             "player_id": self.state.pid,
             "deck_list": self.state.deck_list
         })
+
 
     def send_mulligan_choice(self, keep, cards_to_bottom=None):
         self.connection.send({
@@ -258,20 +281,9 @@ class PduDispatcher:
     def send_concede(self):
         self.connection.send({
             "type": "CONCEDE",
-            "seq_num": self.state.latest_seq_num,
+            "seq_num": self.state.last_received_pdu_seq_num,
             "player_id": self.state.pid
         })
-
-    def send_ping(self, timestamp=None):
-        if timestamp is None:
-            timestamp = int(time.time() * 1000)
-
-        self.connection.send({
-            "type": "PING",
-            "seq_num": self.state.heartbeat_seq_num,
-            "timestamp": timestamp
-        })
-        self.state.heartbeat_seq_num += 1
 
     def _priority_seq_num(self):
         if self.state.priority_seq_num is not None:
