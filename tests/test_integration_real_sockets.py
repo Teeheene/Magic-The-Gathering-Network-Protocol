@@ -99,7 +99,9 @@ class TestRealSocketIntegration(unittest.TestCase):
                 if pdu and pdu.get("type") == "PHASE_TRANSITION" and pdu.get("to_phase") == target_phase:
                     return pdu
 
-        # Game 1: Send PLAYER_READY from both
+        # Game 1: Send PLAYER_READY from both (seed rng so alice is active player)
+        import random
+        self.server.game.rng = random.Random(1)
         c1.sendall(encode_pdu({"type": "PLAYER_READY", "seq_num": 1, "player_id": "alice", "deck_list": deck1}))
         read_until(c1, "GAME_STATE_UPDATE")
 
