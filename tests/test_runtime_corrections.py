@@ -421,3 +421,144 @@ class TestRuntimeCorrections(unittest.TestCase):
         time.sleep(0.3)
 
         self.assertFalse(real_conn.running)  # Connection closed on timeout
+
+    def test_play_land_priority_retention_and_token_refresh(self):
+        """Pass #3 Item 1: AP receives priority -> plays legal land -> land enters battlefield -> GAME_STATE_UPDATE -> PRIORITY_GRANT sent afterward -> new token differs -> AP can immediately PRIORITY_PASS."""
+        c1 = self.create_mock_client("alice", 1001)
+        c1.hand = ["mountain_001"]
+        c1.battlefield = []
+        c2 = self.create_mock_client("bob", 1002)
+
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+        self.game.phase = "PRECOMBAT_MAIN"
+        self.game.active_player = "alice"
+        self.game.pdu_dispatcher.send_priority_grant(c1, "alice")
+
+        initial_priority_token = c1.active_priority_seq_num
+        self.assertIsNotNone(initial_priority_token)
+
+        pdu = {
+            "type": "PLAY_LAND",
+            "seq_num": initial_priority_token,
+            "card_id": "mountain_001"
+        }
+        res = self.game.pdu_dispatcher.handle_play_land(c1, pdu)
+        self.assertTrue(res)
+
+        # Land entered battlefield
+        self.assertIn("mountain_001", [c["id"] if isinstance(c, dict) else c for c in c1.battlefield])
+        self.assertEqual(self.game.priority_holder, "alice")
+
+        new_priority_token = c1.active_priority_seq_num
+        self.assertIsNotNone(new_priority_token)
+        self.assertNotEqual(initial_priority_token, new_priority_token)
+
+        # AP can immediately pass priority with the new token
+        pass_pdu = {
+            "type": "PRIORITY_PASS",
+            "seq_num": new_priority_token
+        }
+        self.assertTrue(self.game.pdu_dispatcher.handle_priority_pass(c1, pass_pdu))
+
+    def test_concede_requires_most_recent_server_pdu_only(self):
+        """Pass #3 Item 2: CONCEDE require pdu['seq_num'] == client.seq_num. Rejects old active_priority_seq_num."""
+        c1 = self.create_mock_client("alice", 1001)
+        c2 = self.create_mock_client("bob", 1002)
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+
+        self.game.pdu_dispatcher.send_priority_grant(c1, "alice")
+        old_priority_token = c1.active_priority_seq_num
+        self.assertEqual(c1.seq_num, old_priority_token)
+
+        # Later server sends GAME_STATE_UPDATE, updating client.seq_num
+        self.game.pdu_dispatcher.send_game_state_update(c1, self.game.state_builder.build_game_state(c1))
+        latest_server_token = c1.seq_num
+        self.assertNotEqual(old_priority_token, latest_server_token)
+
+        # CONCEDE using old priority token -> STALE_ACTION
+        stale_concede = {"type": "CONCEDE", "player_id": "alice", "seq_num": old_priority_token}
+        res1 = self.game.pdu_dispatcher.handle_concede(c1, stale_concede)
+        self.assertFalse(res1)
+
+        # CONCEDE using latest client.seq_num -> accepted
+        valid_concede = {"type": "CONCEDE", "player_id": "alice", "seq_num": latest_server_token}
+        res2 = self.game.pdu_dispatcher.handle_concede(c1, valid_concede)
+        self.assertTrue(res2)
+
+    def test_real_simultaneous_trigger_batching_goblin_guides(self):
+        """Pass #3 Item 3A: Two Goblin Guides attack in same DECLARE_ATTACKERS PDU -> same batch_id -> TRIGGER_ORDER prompt -> order response."""
+        c1 = self.create_mock_client("alice", 1001)
+        c2 = self.create_mock_client("bob", 1002)
+        c1.battlefield = [
+            {"id": "goblin_guide_001", "tapped": False, "summoning_sick": False},
+            {"id": "goblin_guide_002", "tapped": False, "summoning_sick": False}
+        ]
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+        self.game.phase = "DECLARE_ATTACKERS"
+        self.game.active_player = "alice"
+
+        self.game.pdu_dispatcher.send_phase_transition(c1, "BEGIN_COMBAT", "DECLARE_ATTACKERS", "alice", 1)
+        attack_pdu = {
+            "type": "DECLARE_ATTACKERS",
+            "seq_num": c1.active_phase_seq_num,
+            "attackers": [
+                {"creature_id": "goblin_guide_001", "target": "bob"},
+                {"creature_id": "goblin_guide_002", "target": "bob"}
+            ]
+        }
+        self.game.pdu_dispatcher.handle_declare_attackers(c1, attack_pdu)
+
+        # Both Goblin Guide triggers got same batch_id and triggered order prompt for c1
+        self.assertIsNotNone(c1.pending_trigger_ids)
+        self.assertEqual(len(c1.pending_trigger_ids), 2)
+        tids = c1.pending_trigger_ids
+
+        # Respond to order prompt
+        order_pdu = {
+            "type": "TRIGGER_ORDER",
+            "seq_num": c1.active_trigger_seq_num,
+            "ordered_trigger_ids": [tids[1], tids[0]]
+        }
+        self.assertTrue(self.game.pdu_dispatcher.handle_trigger_order_response(c1, order_pdu))
+
+        # Stack top trigger should be tids[0] (pushed second, so on top)
+        self.assertEqual(self.game.stack[-1]["trigger_id"], tids[0])
+        self.assertEqual(self.game.stack[-2]["trigger_id"], tids[1])
+
+    def test_trigger_order_response_preserves_other_batches(self):
+        """Pass #3 Item 3B: Reordering batch A preserves same-controller triggers in batch B."""
+        from app.server.engine.triggers import TriggeredAbility
+        c1 = self.create_mock_client("alice", 1001)
+        c2 = self.create_mock_client("bob", 1002)
+        self.mock_connection.clients = [c1, c2]
+        self.game.clients = [c1, c2]
+
+        trg_a1 = TriggeredAbility("trg_a1", "src_a1", "alice", "Effect A1", False, lambda i, g: ("RESOLVED", []))
+        trg_a1.batch_id = "batch_A"
+        trg_a2 = TriggeredAbility("trg_a2", "src_a2", "alice", "Effect A2", False, lambda i, g: ("RESOLVED", []))
+        trg_a2.batch_id = "batch_A"
+
+        trg_b1 = TriggeredAbility("trg_b1", "src_b1", "alice", "Effect B1", False, lambda i, g: ("RESOLVED", []))
+        trg_b1.batch_id = "batch_B"
+        trg_b2 = TriggeredAbility("trg_b2", "src_b2", "alice", "Effect B2", False, lambda i, g: ("RESOLVED", []))
+        trg_b2.batch_id = "batch_B"
+
+        self.game.trigger_manager.pending_triggers = [trg_a1, trg_a2, trg_b1, trg_b2]
+
+        c1.pending_trigger_ids = ["trg_a1", "trg_a2"]
+        c1.active_trigger_seq_num = 50
+
+        order_pdu = {
+            "type": "TRIGGER_ORDER",
+            "seq_num": 50,
+            "ordered_trigger_ids": ["trg_a2", "trg_a1"]
+        }
+        self.game.pdu_dispatcher.handle_trigger_order_response(c1, order_pdu)
+
+        # Batch B triggers trg_b1 and trg_b2 must remain present in stack or pending_triggers!
+        all_trg_ids = [t.trigger_id for t in self.game.trigger_manager.pending_triggers] + [item.get("trigger_id") for item in self.game.stack if item.get("trigger_id")]
+        self.assertIn("trg_b1", all_trg_ids)
+        self.assertIn("trg_b2", all_trg_ids)

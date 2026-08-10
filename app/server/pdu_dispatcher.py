@@ -578,14 +578,33 @@ class PduDispatcher:
             )
 
         client.pending_trigger_ids = None
-        trg_map = {trg.trigger_id: trg for trg in self.server.trigger_manager.pending_triggers if trg.controller == client.pid}
+        all_pending = list(self.server.trigger_manager.pending_triggers)
+
+        trg_map = {}
+        target_batch_id = None
+        for tid in ordered_trigger_ids:
+            for trg in all_pending:
+                if trg.trigger_id == tid:
+                    trg_map[tid] = trg
+                    if target_batch_id is None:
+                        target_batch_id = getattr(trg, "batch_id", None)
+                    break
+
         reordered = [trg_map[tid] for tid in ordered_trigger_ids if tid in trg_map]
-        if reordered:
-            bid = getattr(reordered[0], "batch_id", None)
-            if bid:
-                self.server.trigger_manager.ordered_batches.add((bid, client.pid))
-        other_trgs = [trg for trg in self.server.trigger_manager.pending_triggers if trg.controller != client.pid]
-        self.server.trigger_manager.pending_triggers = reordered + other_trgs
+        if target_batch_id:
+            self.server.trigger_manager.ordered_batches.add((target_batch_id, client.pid))
+
+        new_pending = []
+        reordered_inserted = False
+        for trg in all_pending:
+            if getattr(trg, "batch_id", None) == target_batch_id and trg.controller == client.pid:
+                if not reordered_inserted:
+                    new_pending.extend(reordered)
+                    reordered_inserted = True
+            else:
+                new_pending.append(trg)
+
+        self.server.trigger_manager.pending_triggers = new_pending
         return self.server.post_event()
 
     def handle_trigger_choice_response(self, client, pdu):
@@ -685,13 +704,17 @@ class PduDispatcher:
         self.server.attackers_declared = True
 
         from app.server.engine.triggers import GameEvent
-        for att in attackers:
-            self.server.post_event(GameEvent("attacker_declared", {
+        events = [
+            GameEvent("attacker_declared", {
                 "attacker_id": att["creature_id"],
                 "creature_id": att["creature_id"],
                 "target": att["target"],
                 "controller": client.pid
-            }))
+            })
+            for att in attackers
+        ]
+        if events:
+            self.server.post_event(events)
 
         for permanent in attacking_permanents:
             if isinstance(permanent, dict):
@@ -861,6 +884,7 @@ class PduDispatcher:
         self.server.land_played_this_turn = land_played_map
         self.server.consecutive_priority_passes = 0
         self._broadcast_game_state()
+        self.server.grant_priority(client.pid)
         return True
 
 
@@ -937,17 +961,7 @@ class PduDispatcher:
             )
 
         seq_num = pdu.get("seq_num")
-        valid_seqs = {
-            getattr(client, "seq_num", None),
-            getattr(client, "active_priority_seq_num", None),
-            getattr(client, "active_mulligan_seq_num", None),
-            getattr(client, "active_phase_seq_num", None),
-            getattr(client, "active_trigger_seq_num", None),
-            getattr(client, "active_cleanup_seq_num", None),
-        }
-        valid_seqs.discard(None)
-
-        if seq_num not in valid_seqs:
+        if seq_num is None or seq_num != getattr(client, "seq_num", None):
             return self.send_error(
                 client,
                 "CONCEDE seq_num does not match active sequence token.",

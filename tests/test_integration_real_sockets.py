@@ -119,8 +119,9 @@ class TestRealSocketIntegration(unittest.TestCase):
         upk_c1 = read_until_phase(c1, "UPKEEP")
         upk_c2 = read_until_phase(c2, "UPKEEP")
 
-        # Alice concedes during UPKEEP with valid player_id and seq_num
-        c1.sendall(encode_pdu({"type": "CONCEDE", "seq_num": upk_c1["seq_num"], "player_id": "alice"}))
+        # Alice receives priority in UPKEEP and concedes using the latest server token
+        pg_c1 = read_until(c1, "PRIORITY_GRANT")
+        c1.sendall(encode_pdu({"type": "CONCEDE", "seq_num": pg_c1["seq_num"], "player_id": "alice"}))
 
         # Read GAME_OVER PDU on c1 and c2
         go1 = read_until(c1, "GAME_OVER")
