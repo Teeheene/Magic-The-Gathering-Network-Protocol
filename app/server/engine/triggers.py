@@ -51,6 +51,7 @@ class TriggeredAbility:
         requires_target: bool = False,
         legal_targets: Optional[List[str]] = None,
         effect_fn: Optional[Callable[[Dict[str, Any], Any], Any]] = None,
+        batch_id: Optional[str] = None,
     ):
         self.trigger_id = trigger_id
         self.source_id = source_id
@@ -59,6 +60,7 @@ class TriggeredAbility:
         self.requires_target = requires_target
         self.legal_targets = legal_targets or []
         self.effect_fn = effect_fn
+        self.batch_id = batch_id
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -68,6 +70,7 @@ class TriggeredAbility:
             "effect_summary": self.effect_summary,
             "requires_target": self.requires_target,
             "legal_targets": self.legal_targets,
+            "batch_id": self.batch_id,
         }
 
 
@@ -77,11 +80,18 @@ class TriggerManager:
         self.catalog = catalog
         self.pending_triggers: List[TriggeredAbility] = []
         self._next_trg_id = 1
+        self._next_batch_id = 1
+        self.ordered_batches: set = set()
 
     def generate_trigger_id(self) -> str:
         tid = f"trg_{self._next_trg_id:02d}"
         self._next_trg_id += 1
         return tid
+
+    def generate_batch_id(self) -> str:
+        bid = f"batch_{self._next_batch_id:02d}"
+        self._next_batch_id += 1
+        return bid
 
     def detect_triggers_for_event(self, event: GameEvent) -> List[TriggeredAbility]:
         detected: List[TriggeredAbility] = []
@@ -109,7 +119,12 @@ class TriggerManager:
             target_id = event.data.get("target_id", "")
             base_id = get_base_id(target_id)
             if base_id == "phantasmal_bear":
-                ctrl = event.data.get("controller", "")
+                owner, perm = None, None
+                if hasattr(self.game, "find_permanent"):
+                    res = self.game.find_permanent(target_id)
+                    if isinstance(res, (tuple, list)) and len(res) == 2:
+                        owner, perm = res
+                ctrl = owner.pid if (owner and getattr(owner, "pid", None)) else event.data.get("controller", "")
                 trg = TriggeredAbility(
                     trigger_id=self.generate_trigger_id(),
                     source_id=target_id,

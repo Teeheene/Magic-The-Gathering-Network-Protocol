@@ -12,13 +12,14 @@ class ConnectedClient:
         self.mulligan_taken = 0
         self.mulligan_kept = False
 
-        # Token tracking per RFC §5.3
         self.active_priority_seq_num = None
         self.active_phase_seq_num = None
         self.active_trigger_seq_num = None
         self.active_mulligan_seq_num = None
         self.active_cleanup_seq_num = None
         self.phase_seq_num = None
+        self.pending_trigger_ids = None
+        self.pending_trigger_choice = None
 
     def send(self, pdu):
         self.sock.sendall(

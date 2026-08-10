@@ -72,16 +72,16 @@ class TestRealSocketIntegration(unittest.TestCase):
         c2.close()
 
     def test_same_socket_rematch_full_flow(self):
-        """Req 11: Real TCP socket test for Game 1 -> CONCEDE -> GAME_OVER -> LOBBY -> fresh PLAYER_READY from both on SAME sockets -> Game 2 setup."""
+        """Req 6: Real TCP socket test for Game 1 -> MULLIGAN KEEP -> UPKEEP -> CONCEDE -> GAME_OVER -> LOBBY -> fresh PLAYER_READY on SAME sockets -> Game 2."""
         server_thread = threading.Thread(target=self.server.wait_for_players, daemon=True)
         server_thread.start()
 
         c1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        c1.settimeout(2.0)
+        c1.settimeout(3.0)
         c1.connect(("127.0.0.1", self.port))
 
         c2 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        c2.settimeout(2.0)
+        c2.settimeout(3.0)
         c2.connect(("127.0.0.1", self.port))
 
         deck1 = [f"mountain_{i:03d}" for i in range(1, 21)]
@@ -105,12 +105,22 @@ class TestRealSocketIntegration(unittest.TestCase):
 
         c2.sendall(encode_pdu({"type": "PLAYER_READY", "seq_num": 1, "player_id": "bob", "deck_list": deck2}))
 
-        # Read Game 1 setup PDU on c1 & c2
+        # Read Game 1 MULLIGAN phase transitions and state updates
         read_until_phase(c1, "MULLIGAN")
         read_until_phase(c2, "MULLIGAN")
+        gsu_c1 = read_until(c1, "GAME_STATE_UPDATE")
+        gsu_c2 = read_until(c2, "GAME_STATE_UPDATE")
 
-        # Alice concedes during Mulligan phase
-        c1.sendall(encode_pdu({"type": "CONCEDE", "seq_num": 10}))
+        # Both keep hand in Mulligan
+        c1.sendall(encode_pdu({"type": "MULLIGAN_CHOICE", "seq_num": gsu_c1["seq_num"], "keep": True, "cards_to_bottom": []}))
+        c2.sendall(encode_pdu({"type": "MULLIGAN_CHOICE", "seq_num": gsu_c2["seq_num"], "keep": True, "cards_to_bottom": []}))
+
+        # Both reach UPKEEP
+        upk_c1 = read_until_phase(c1, "UPKEEP")
+        upk_c2 = read_until_phase(c2, "UPKEEP")
+
+        # Alice concedes during UPKEEP with valid player_id and seq_num
+        c1.sendall(encode_pdu({"type": "CONCEDE", "seq_num": upk_c1["seq_num"], "player_id": "alice"}))
 
         # Read GAME_OVER PDU on c1 and c2
         go1 = read_until(c1, "GAME_OVER")
@@ -120,16 +130,50 @@ class TestRealSocketIntegration(unittest.TestCase):
         go2 = read_until(c2, "GAME_OVER")
         self.assertEqual(go2["type"], "GAME_OVER")
 
+        # Both receive LOBBY game state update after match reset
+        l_c1 = read_until(c1, "GAME_STATE_UPDATE")
+        self.assertEqual(l_c1["state"]["phase"], "LOBBY")
+        l_c2 = read_until(c2, "GAME_STATE_UPDATE")
+        self.assertEqual(l_c2["state"]["phase"], "LOBBY")
+
         # Now send fresh PLAYER_READY on SAME sockets (c1, c2) for Game 2
         c1.sendall(encode_pdu({"type": "PLAYER_READY", "seq_num": 2, "player_id": "alice", "deck_list": deck1}))
-        read_until(c1, "GAME_STATE_UPDATE")
-
         c2.sendall(encode_pdu({"type": "PLAYER_READY", "seq_num": 2, "player_id": "bob", "deck_list": deck2}))
+        time.sleep(0.1)
 
         # Game 2 setup PDU received on c1!
-        g2_setup = read_until(c1, "PHASE_TRANSITION")
+        g2_setup = read_until_phase(c1, "GAME_SETUP")
         self.assertEqual(g2_setup["type"], "PHASE_TRANSITION")
         self.assertEqual(g2_setup["to_phase"], "GAME_SETUP")
 
         c1.close()
         c2.close()
+
+    def test_lobby_malformed_json_resilience(self):
+        """Item 9: Server receives malformed JSON in lobby -> sends INVALID_JSON error -> connection stays alive -> accepts valid PLAYER_READY."""
+        server_thread = threading.Thread(target=self.server.wait_for_players, daemon=True)
+        server_thread.start()
+
+        c1 = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        c1.settimeout(2.0)
+        c1.connect(("127.0.0.1", self.port))
+        time.sleep(0.05)
+
+        # Send framed malformed JSON bytes (header = 4, payload = 4 bytes '{bad')
+        raw_invalid = b"\x00\x00\x00\x04{bad"
+        c1.sendall(raw_invalid)
+
+        # Server sends INVALID_JSON error PDU
+        err_pdu = decode_pdu(c1)
+        self.assertEqual(err_pdu["type"], "ERROR")
+        self.assertEqual(err_pdu["code"], "INVALID_JSON")
+
+        # Server thread stays alive and accepts valid PLAYER_READY on same connection
+        deck1 = [f"mountain_{i:03d}" for i in range(1, 21)]
+        c1.sendall(encode_pdu({"type": "PLAYER_READY", "seq_num": 1, "player_id": "alice", "deck_list": deck1}))
+
+        res_pdu = decode_pdu(c1)
+        self.assertEqual(res_pdu["type"], "GAME_STATE_UPDATE")
+        self.assertEqual(res_pdu["state"]["phase"], "LOBBY")
+
+        c1.close()

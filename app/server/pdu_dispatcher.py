@@ -580,6 +580,10 @@ class PduDispatcher:
         client.pending_trigger_ids = None
         trg_map = {trg.trigger_id: trg for trg in self.server.trigger_manager.pending_triggers if trg.controller == client.pid}
         reordered = [trg_map[tid] for tid in ordered_trigger_ids if tid in trg_map]
+        if reordered:
+            bid = getattr(reordered[0], "batch_id", None)
+            if bid:
+                self.server.trigger_manager.ordered_batches.add((bid, client.pid))
         other_trgs = [trg for trg in self.server.trigger_manager.pending_triggers if trg.controller != client.pid]
         self.server.trigger_manager.pending_triggers = reordered + other_trgs
         return self.server.post_event()
@@ -624,21 +628,9 @@ class PduDispatcher:
 
     def handle_declare_attackers(self, client, pdu):
         if getattr(self.server, "phase", None) != "DECLARE_ATTACKERS":
-            error = self.build_error(
-                "It is not declare attackers.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "It is not declare attackers.", ERR_ILLEGAL_ACTION, pdu)
         if client.pid != self.server.active_player:
-            error = self.build_error(
-                "Only the active player attacks.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "Only the active player attacks.", ERR_ILLEGAL_ACTION, pdu)
         if not self._validate_phase_seq_num(client, pdu):
             return False
 
@@ -649,13 +641,7 @@ class PduDispatcher:
             and isinstance(attacker.get("target"), str)
             for attacker in attackers
         ):
-            error = self.build_error(
-                "Invalid attackers list.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "Invalid attackers list.", ERR_ILLEGAL_ACTION, pdu)
 
         creature_ids = [attacker["creature_id"] for attacker in attackers]
         if len(creature_ids) != len(set(creature_ids)):
@@ -720,26 +706,13 @@ class PduDispatcher:
 
 
 
-    def handle_concede(self, client, pdu):
-        return self.server.end_game(client, "CONCEDE")
+
 
     def handle_declare_blockers(self, client, pdu):
         if getattr(self.server, "phase", None) != "DECLARE_BLOCKERS":
-            error = self.build_error(
-                "It is not declare blockers.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "It is not declare blockers.", ERR_ILLEGAL_ACTION, pdu)
         if client.pid == self.server.active_player:
-            error = self.build_error(
-                "The active player cannot block.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "The active player cannot block.", ERR_ILLEGAL_ACTION, pdu)
         if not self._validate_phase_seq_num(client, pdu):
             return False
 
@@ -750,13 +723,7 @@ class PduDispatcher:
             and isinstance(blocker.get("blocking_id"), str)
             for blocker in blockers
         ):
-            error = self.build_error(
-                "Invalid blockers list.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "Invalid blockers list.", ERR_ILLEGAL_ACTION, pdu)
 
         blocker_ids = [blocker["creature_id"] for blocker in blockers]
         attacking_ids = {
@@ -772,7 +739,6 @@ class PduDispatcher:
         ):
             return self.send_error(client, "Every blocker must be on your battlefield.", ERR_ILLEGAL_ACTION, pdu)
 
-        # Enforce that every blocker is a Creature
         for blocker_id in blocker_ids:
             card_data = self.server.card_data(blocker_id) or {}
             if "creature" not in card_data.get("card_type", "").casefold():
@@ -792,26 +758,13 @@ class PduDispatcher:
 
             if "flying" in attacker_keywords:
                 if "flying" not in blocker_keywords and "reach" not in blocker_keywords:
-                    error = self.build_error(
-                        "Ground creatures without Flying or Reach cannot block flying creatures.",
-                        ERR_ILLEGAL_ACTION,
-                        pdu
-                    )
-                    client.send(error)
-                    return False
+                    return self.send_error(client, "Ground creatures without Flying or Reach cannot block flying creatures.", ERR_ILLEGAL_ACTION, pdu)
 
         if any(
             blocker["blocking_id"] not in attacking_ids
             for blocker in blockers
         ):
-
-            error = self.build_error(
-                "A blocker targets a non-attacker.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "A blocker targets a non-attacker.", ERR_ILLEGAL_ACTION, pdu)
 
         self.server.blockers = list(blockers)
         self.server.blockers_declared = True
@@ -820,21 +773,9 @@ class PduDispatcher:
 
     def handle_assign_damage_order(self, client, pdu):
         if getattr(self.server, "phase", None) != "ASSIGN_DAMAGE_ORDER":
-            error = self.build_error(
-                "It is not assign damage order.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "It is not assign damage order.", ERR_ILLEGAL_ACTION, pdu)
         if client.pid != self.server.active_player:
-            error = self.build_error(
-                "Only the attacking player assigns damage order.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "Only the attacking player assigns damage order.", ERR_ILLEGAL_ACTION, pdu)
         if not self._validate_phase_seq_num(client, pdu):
             return False
 
@@ -845,21 +786,9 @@ class PduDispatcher:
             or not isinstance(blocker_order, list)
             or not all(isinstance(blocker_id, str) for blocker_id in blocker_order)
         ):
-            error = self.build_error(
-                "Invalid damage order response.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "Invalid damage order response.", ERR_ILLEGAL_ACTION, pdu)
         if attacker_id not in getattr(self.server, "pending_damage_orders", set()):
-            error = self.build_error(
-                "This attacker does not need a damage order.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "This attacker does not need a damage order.", ERR_ILLEGAL_ACTION, pdu)
 
         expected_blockers = [
             blocker["creature_id"]
@@ -867,13 +796,7 @@ class PduDispatcher:
             if blocker["blocking_id"] == attacker_id
         ]
         if Counter(blocker_order) != Counter(expected_blockers):
-            error = self.build_error(
-                "blocker_order must contain every blocker exactly once.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "blocker_order must contain every blocker exactly once.", ERR_ILLEGAL_ACTION, pdu)
 
         if not hasattr(self.server, "damage_orders"):
             self.server.damage_orders = {}
@@ -923,42 +846,19 @@ class PduDispatcher:
 
         card_id = pdu.get("card_id")
         if not isinstance(card_id, str) or card_id not in client.hand:
-            return self.send_error(
-                client,
-                "The land is not in your hand.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "The land is not in your hand.", ERR_ILLEGAL_ACTION, pdu)
 
         card_data = self.server.card_data(card_id) or {}
         if "land" not in card_data.get("card_type", "").casefold():
-            error = self.build_error(
-                "Card played is not a land.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
-
-        land_plays = getattr(self.server, "land_played_this_turn", {})
-        if land_plays.get(client.pid, False):
-            error = self.build_error(
-                "You already played a land this turn.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-            client.send(error)
-            return False
+            return self.send_error(client, "Card played is not a land.", ERR_ILLEGAL_ACTION, pdu)
 
         client.hand.remove(card_id)
         client.battlefield.append({
             "id": card_id,
             "tapped": False
         })
-        land_plays[client.pid] = True
-        self.server.land_played_this_turn = land_plays
+        land_played_map[client.pid] = True
+        self.server.land_played_this_turn = land_played_map
         self.server.consecutive_priority_passes = 0
         self._broadcast_game_state()
         return True
@@ -1028,13 +928,33 @@ class PduDispatcher:
 
     def handle_concede(self, client, pdu):
         player_id = pdu.get("player_id")
-        if player_id is not None and player_id != client.pid:
+        if not player_id or player_id != client.pid:
             return self.send_error(
                 client,
                 "A player may only concede for themselves.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
+
+        seq_num = pdu.get("seq_num")
+        valid_seqs = {
+            getattr(client, "seq_num", None),
+            getattr(client, "active_priority_seq_num", None),
+            getattr(client, "active_mulligan_seq_num", None),
+            getattr(client, "active_phase_seq_num", None),
+            getattr(client, "active_trigger_seq_num", None),
+            getattr(client, "active_cleanup_seq_num", None),
+        }
+        valid_seqs.discard(None)
+
+        if seq_num not in valid_seqs:
+            return self.send_error(
+                client,
+                "CONCEDE seq_num does not match active sequence token.",
+                ERR_STALE_ACTION,
+                pdu
+            )
+
         return self.server.end_game(client, "CONCEDE")
 
     def handle_ping(self, client, pdu):

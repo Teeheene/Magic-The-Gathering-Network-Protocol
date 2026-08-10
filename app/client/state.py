@@ -72,8 +72,29 @@ class ClientState:
         self.turn = 0
         self.active_player = None
         self.priority_holder = None
+        self.life_totals = {}
+        self.hand = {}
         self.local_hand = []
+        self.hand_counts = {}
+        self.library_counts = {}
+        self.battlefield = {}
+        self.graveyard = {}
         self.stack = []
+        self.land_played_this_turn = False
+        self.attackers = []
+        self.blockers = []
+        self.damage_orders = {}
+        self.attackers_declared = False
+        self.blockers_declared = False
+        self.pending_damage_orders = []
+
+        self.priority_seq_num = None
+        self.phase_seq_num = None
+        self.trigger_seq_num = None
+
+        self.pending_request = None
+        self.last_stack_resolution = None
+        self.last_combat_damage_result = None
         self.is_game_over = False
         self.game_over_info = None
 

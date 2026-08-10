@@ -1,3 +1,4 @@
+import json
 import socket
 from typing import Optional
 
@@ -68,6 +69,9 @@ class ServerConnection:
                                         self.pdu_dispatcher.send_game_state_update(c, state)
                         except (socket.timeout, TimeoutError, OSError):
                             pass
+                        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+                            from app.server.pdu_dispatcher import MSG_INVALID_JSON, ERR_INVALID_JSON
+                            self.pdu_dispatcher.send_error(client, MSG_INVALID_JSON, ERR_INVALID_JSON)
                         except ConnectionError:
                             print(f"Client {client.address} disconnected in lobby.")
                             if client in self.clients:
@@ -110,15 +114,7 @@ class ServerConnection:
             if disconnected_client in self.clients:
                 self.clients.remove(disconnected_client)
             disconnected_client.close()
-            print(f"Player {disconnected_client.pid} disconnected.")
-
-            # Notify surviving player if game was running
-            survivor = self.clients[0] if self.clients else None
-            if survivor:
-                self.pdu_dispatcher.broadcast_game_over(
-                    winner_id=survivor.pid,
-                    reason="DISCONNECT"
-                )
+            print(f"Player {getattr(disconnected_client, 'pid', 'unknown')} disconnected.")
 
         self.game.reset()
         for client in list(self.clients):

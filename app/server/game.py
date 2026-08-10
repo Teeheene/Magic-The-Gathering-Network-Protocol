@@ -2,8 +2,10 @@ import json
 import select
 import random
 import re
+import time
 from collections import Counter
 from pathlib import Path
+from typing import Optional
 
 from app.server.pdu_dispatcher import PduDispatcher
 from app.server.game_state import StateBuilder
@@ -42,7 +44,6 @@ class Game:
         self.attackers_declared = False
         self.blockers_declared = False
         self.next_stack_item_id = 1
-        self.game_over = False
         self.event_bus = EventBus()
         self.trigger_manager = TriggerManager(self, self.card_catalog)
         self.cant_gain_life_this_turn = False
@@ -599,6 +600,7 @@ class Game:
             "DECLARE_BLOCKERS": self.advance_after_blockers,
             "ASSIGN_DAMAGE_ORDER": self.start_combat_damage,
             "FIRST_STRIKE_DAMAGE": lambda: self.resolve_combat_damage(False),
+            "COMBAT_DAMAGE": lambda: self.enter_priority_phase("END_OF_COMBAT"),
             "END_OF_COMBAT": lambda: self.enter_priority_phase("POSTCOMBAT_MAIN"),
             "POSTCOMBAT_MAIN": lambda: self.enter_priority_phase("END_STEP"),
             "END_STEP": self.cleanup
@@ -676,7 +678,6 @@ class Game:
         return self.resolve_combat_damage(False)
 
     def combat_has_first_strike(self):
-
         combat_ids = {
             attacker["creature_id"]
             for attacker in getattr(self, "attackers", [])
@@ -692,17 +693,15 @@ class Game:
                 return True
         return False
 
-        self.event_bus = EventBus()
-        self.trigger_manager = TriggerManager(self, self.card_catalog)
-        self.cant_gain_life_this_turn = False
-
     def post_event(self, events=None):
         """Canonical post-event pipeline per MTG rules & RFC requirements."""
+        batch_id = self.trigger_manager.generate_batch_id() if events is not None else None
         if events is not None:
             event_list = events if isinstance(events, list) else [events]
             for event in event_list:
                 self.event_bus.publish(event)
                 for trg in self.trigger_manager.detect_triggers_for_event(event):
+                    trg.batch_id = trg.batch_id or batch_id
                     self.trigger_manager.pending_triggers.append(trg)
 
         # 1. Run State-Based Actions
@@ -712,52 +711,66 @@ class Game:
                 death_event = GameEvent("creature_died", change)
                 self.event_bus.publish(death_event)
                 for trg in self.trigger_manager.detect_triggers_for_event(death_event):
+                    trg.batch_id = trg.batch_id or batch_id or self.trigger_manager.generate_batch_id()
                     self.trigger_manager.pending_triggers.append(trg)
+
+        # Ensure all unbatched pending triggers share a single batch_id
+        unbatched = [t for t in self.trigger_manager.pending_triggers if not getattr(t, "batch_id", None)]
+        if unbatched:
+            shared_bid = self.trigger_manager.generate_batch_id()
+            for trg in unbatched:
+                trg.batch_id = shared_bid
 
         # 2. Check Game Over
         if game_over_info is not None:
-            self.game_over = True
-            self.pdu_dispatcher.broadcast_game_over(game_over_info["winner_id"], game_over_info["reason"])
-            self.connection.return_to_lobby()
-            return False
+            winner_c = self.client_for_player(game_over_info["winner_id"])
+            loser_c = self.other_client(winner_c) if winner_c else self.clients[0] if self.clients else None
+            return self.end_game(loser_c, game_over_info["reason"])
 
         # 3. Process Pending Triggers into stack items
         if self.has_pending_decision():
             self.pdu_dispatcher._broadcast_game_state()
             return False
 
-        # Simultaneous trigger ordering check
-        if not getattr(self.trigger_manager, "triggers_ordered", False):
-            ap = self.active_player
-            nap = self.other_player(ap) if ap else None
-
-            ap_trgs = [t for t in self.trigger_manager.pending_triggers if t.controller == ap]
-            nap_trgs = [t for t in self.trigger_manager.pending_triggers if t.controller == nap]
-
-            ap_client = self.client_for_player(ap) if ap else None
-            nap_client = self.client_for_player(nap) if nap else None
-
-            if len(ap_trgs) > 1 and ap_client and not getattr(ap_client, "pending_trigger_ids", None):
-                self.trigger_manager.triggers_ordered = True
-                self.pdu_dispatcher.send_trigger_order_prompt(ap_client, ap, [t.trigger_id for t in ap_trgs])
-                self.pdu_dispatcher._broadcast_game_state()
-                return False
-
-            if len(nap_trgs) > 1 and nap_client and not getattr(nap_client, "pending_trigger_ids", None):
-                self.trigger_manager.triggers_ordered = True
-                self.pdu_dispatcher.send_trigger_order_prompt(nap_client, nap, [t.trigger_id for t in nap_trgs])
-                self.pdu_dispatcher._broadcast_game_state()
-                return False
-
-            self.trigger_manager.triggers_ordered = True
-
-        # Order AP triggers first, NAP triggers second (so NAP triggers go on stack on top and resolve first)
         ap = self.active_player
         nap = self.other_player(ap) if ap else None
-        ordered_pending = [t for t in self.trigger_manager.pending_triggers if t.controller == ap] + \
-                          [t for t in self.trigger_manager.pending_triggers if t.controller == nap] + \
-                          [t for t in self.trigger_manager.pending_triggers if t.controller not in (ap, nap)]
-        self.trigger_manager.pending_triggers = ordered_pending
+        ap_client = self.client_for_player(ap) if ap else None
+        nap_client = self.client_for_player(nap) if nap else None
+
+        # Identify distinct un-ordered batches
+        distinct_batches = []
+        for t in self.trigger_manager.pending_triggers:
+            bid = getattr(t, "batch_id", None)
+            if bid and bid not in distinct_batches:
+                distinct_batches.append(bid)
+
+        for bid in distinct_batches:
+            batch_trgs = [t for t in self.trigger_manager.pending_triggers if getattr(t, "batch_id", None) == bid]
+            ap_trgs = [t for t in batch_trgs if t.controller == ap]
+            nap_trgs = [t for t in batch_trgs if t.controller == nap]
+
+            if len(ap_trgs) > 1 and (bid, ap) not in self.trigger_manager.ordered_batches:
+                if ap_client and not getattr(ap_client, "pending_trigger_ids", None):
+                    self.pdu_dispatcher.send_trigger_order_prompt(ap_client, ap, [t.trigger_id for t in ap_trgs])
+                    self.pdu_dispatcher._broadcast_game_state()
+                    return False
+
+            if len(nap_trgs) > 1 and (bid, nap) not in self.trigger_manager.ordered_batches:
+                if nap_client and not getattr(nap_client, "pending_trigger_ids", None):
+                    self.pdu_dispatcher.send_trigger_order_prompt(nap_client, nap, [t.trigger_id for t in nap_trgs])
+                    self.pdu_dispatcher._broadcast_game_state()
+                    return False
+
+        # Sort pending triggers batch-by-batch: AP first, NAP second (on top)
+        new_pending = []
+        for bid in distinct_batches:
+            batch_trgs = [t for t in self.trigger_manager.pending_triggers if getattr(t, "batch_id", None) == bid]
+            b_ap = [t for t in batch_trgs if t.controller == ap]
+            b_nap = [t for t in batch_trgs if t.controller == nap]
+            b_other = [t for t in batch_trgs if t.controller not in (ap, nap)]
+            new_pending.extend(b_ap + b_nap + b_other)
+        remaining_unbatched = [t for t in self.trigger_manager.pending_triggers if not getattr(t, "batch_id", None)]
+        self.trigger_manager.pending_triggers = new_pending + remaining_unbatched
 
         while self.trigger_manager.pending_triggers:
             trg = self.trigger_manager.pending_triggers[0]
@@ -769,7 +782,6 @@ class Game:
                         self.pdu_dispatcher._broadcast_game_state()
                         return False
                 else:
-                    # Target required but no legal targets: trigger fizzles
                     self.trigger_manager.pending_triggers.pop(0)
                     continue
 
@@ -976,10 +988,7 @@ class Game:
                             })
 
         self.post_event(GameEvent("combat_damage_dealt", {"damage_events": damage_events}))
-
-        if first_strike:
-            return self.open_priority_window()
-        return self.enter_priority_phase("END_OF_COMBAT")
+        return self.open_priority_window()
 
     def cleanup(self):
         self.priority_holder = None
@@ -1026,21 +1035,38 @@ class Game:
 
 
 
+    def check_priority_timeout(self) -> bool:
+        if self.priority_holder:
+            p_client = self.client_for_player(self.priority_holder)
+            if p_client and getattr(p_client, "priority_deadline", None) is not None:
+                if time.monotonic() > p_client.priority_deadline:
+                    print(f"Priority deadline expired for {p_client.pid}")
+                    self.end_game(p_client, "DISCONNECT")
+                    return True
+        return False
+
     def end_game(self, losing_client, reason):
         winning_client = self.other_client(losing_client)
         winner_id = winning_client.pid if winning_client is not None else None
+        loser_id = losing_client.pid if losing_client else None
         self.priority_holder = None
-        if not self.transition_phase("GAME_OVER"):
-            return False
+        self.transition_phase("GAME_OVER")
         self.game_over = True
-        for client in self.clients:
+        for client in list(self.clients):
             client.ready_in_lobby = False
-            self.pdu_dispatcher.send_game_over(
-                client,
-                winner_id,
-                losing_client.pid if losing_client else None,
-                reason
-            )
+            try:
+                self.pdu_dispatcher.send_game_over(
+                    client,
+                    winner_id,
+                    loser_id,
+                    reason
+                )
+            except (ConnectionError, OSError):
+                pass
+        if reason == "DISCONNECT":
+            self.connection.return_to_lobby(disconnected_client=losing_client)
+        else:
+            self.connection.return_to_lobby(disconnected_client=None)
         return True
 
     def run_game_loop(self):
@@ -1064,14 +1090,8 @@ class Game:
             self.connection.refuse_extra_connections()
 
             # Check server priority deadline
-            if self.priority_holder:
-                p_client = self.client_for_player(self.priority_holder)
-                if p_client and getattr(p_client, "priority_deadline", None) is not None:
-                    import time
-                    if time.monotonic() > p_client.priority_deadline:
-                        print(f"Priority deadline expired for {p_client.pid}")
-                        self.end_game(p_client, "DISCONNECT")
-                        break
+            if self.check_priority_timeout():
+                break
 
             sockets = [client.sock for client in self.clients]
             readable, _, _ = select.select(sockets, [], [], 0.1)
@@ -1086,7 +1106,7 @@ class Game:
                     pdu = client.receive()
                     self.pdu_dispatcher.handle(client, pdu)
                 except (ConnectionError, OSError):
-                    self.return_to_lobby(client)
+                    self.end_game(client, "DISCONNECT")
                     return
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     from app.server.pdu_dispatcher import MSG_INVALID_JSON, ERR_INVALID_JSON

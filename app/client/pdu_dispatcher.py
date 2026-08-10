@@ -46,14 +46,8 @@ class PduDispatcher:
 
         #lobby phase deals with no game setup
         if server_state.get("phase") == "LOBBY":
-            self.state.phase = "LOBBY"
+            self.state.reset_for_lobby()
             self.state.joined = False
-            self.state.active_player = None
-            self.state.priority_holder = None
-            self.state.priority_seq_num = None
-            self.state.phase_seq_num = None
-            self.state.trigger_seq_num = None
-            self.state.pending_request = None
             return
 
         remembered_fields = (
@@ -287,8 +281,6 @@ class PduDispatcher:
             "seq_num": self.state.latest_seq_num,
             "player_id": self.state.pid
         })
-
-        self.state.heartbeat_seq_num += 1
 
     def _priority_seq_num(self):
         if self.state.priority_seq_num is not None:
