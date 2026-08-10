@@ -1079,6 +1079,40 @@ class Game:
                 self.pdu_dispatcher.broadcast_stack_resolve(item["stack_item_id"], "RESOLVED", changes)
                 return self.post_event()
 
+            if base_id == "ponder":
+                viewed = list(ctrl_client.library[:3])
+                if not viewed:
+                    return finish_choice_spell([])
+                def finish_ponder(answer):
+                    if answer[0]:
+                        getattr(self, "rng", random).shuffle(ctrl_client.library)
+                    drawn = ctrl_client.library.pop(0) if ctrl_client.library else None
+                    if drawn is not None:
+                        ctrl_client.hand.append(drawn)
+                    return finish_choice_spell([{"type": "DRAW", "player": controller}])
+                def request_shuffle(ordered):
+                    ctrl_client.library[:len(viewed)] = ordered
+                    self.pdu_dispatcher.send_card_choice_request(
+                        ctrl_client, source_id, "YES_NO", "Shuffle your library?",
+                        1, 1, [True, False],
+                        validator=lambda pdu: (pdu.get("answer"),) if isinstance(pdu.get("answer"), bool) else None,
+                        continuation=finish_ponder,
+                    )
+                    return False
+                def validate_order(pdu):
+                    ordered = pdu.get("ordered_cards")
+                    if not isinstance(ordered, list) or len(ordered) != len(viewed):
+                        return None
+                    if len(set(ordered)) != len(ordered) or sorted(ordered) != sorted(viewed):
+                        return None
+                    return list(ordered)
+                self.pdu_dispatcher.send_card_choice_request(
+                    ctrl_client, source_id, "ORDER_CARDS", "Order the cards from top to bottom.",
+                    len(viewed), len(viewed), viewed,
+                    validator=validate_order, continuation=request_shuffle,
+                )
+                return False
+
             if base_id == "mind_rot":
                 target_client = self.client_for_player(targets[0])
                 options = list(target_client.hand)

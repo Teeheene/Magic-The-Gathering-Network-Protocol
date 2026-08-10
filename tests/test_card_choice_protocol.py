@@ -159,6 +159,39 @@ class CardChoiceFixture(unittest.TestCase):
         self.assertTrue(self.answer(self.bob, selected_cards=["island_001"]))
         self.assertIn({"id": "island_001", "tapped": True}, self.bob.battlefield)
 
+    def test_ponder_orders_privately_then_optionally_shuffles_and_draws(self):
+        self.alice.library = ["island_001", "shock_001", "forest_001", "mountain_001"]
+        self.resolve_item("ponder_001")
+        self.assertEqual(self.alice.pending_card_choice["choice_type"], "ORDER_CARDS")
+        self.assertFalse(any(b"island_001" in call.args[0] for call in self.bob.sock.sendall.call_args_list))
+        token = self.alice.active_card_choice_seq_num
+        self.assertFalse(self.game.pdu_dispatcher.handle(self.alice, {
+            "type": "CARD_CHOICE_RESPONSE", "seq_num": token, "player_id": "alice",
+            "ordered_cards": ["shock_001", "shock_001", "forest_001"],
+        }))
+        self.answer(self.alice, ordered_cards=["forest_001", "island_001", "shock_001"])
+        self.assertEqual(self.alice.pending_card_choice["choice_type"], "YES_NO")
+        self.answer(self.alice, answer=False)
+        self.assertEqual(self.alice.hand, ["forest_001"])
+        self.assertEqual(self.alice.library[:2], ["island_001", "shock_001"])
+
+    def test_ponder_short_and_empty_libraries(self):
+        for cards in (["island_001", "forest_001"], ["island_001"]):
+            with self.subTest(count=len(cards)):
+                self.alice.hand = []
+                self.alice.graveyard = []
+                self.alice.library = list(cards)
+                self.resolve_item("ponder_001")
+                self.assertEqual(self.alice.pending_card_choice["options"], cards)
+                self.answer(self.alice, ordered_cards=list(reversed(cards)))
+                self.answer(self.alice, answer=False)
+                self.assertEqual(self.alice.hand, [cards[-1]])
+        self.alice.hand = []
+        self.alice.library = []
+        self.resolve_item("ponder_002")
+        self.assertIsNone(self.alice.pending_card_choice)
+        self.assertEqual(self.alice.hand, [])
+
 
 if __name__ == "__main__":
     unittest.main()
