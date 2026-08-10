@@ -28,6 +28,7 @@ class MainWindow(QMainWindow):
         self.catalog = CardCatalog(CATALOG_PATH)
         self.presenter = GamePresenter(state, self.catalog)
         self._choice_dialog_open = False
+        self._trigger_dialog_open = False
         self._selected_attackers = []
         self.setWindowTitle(f"MTGNP 1.0 Client — Player: {state.pid}")
         self.resize(1366, 820)
@@ -94,7 +95,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(QLabel("3. MULLIGAN DECISION"))
         self.mulligan_hand = QListWidget(); self.mulligan_hand.setSelectionMode(QListWidget.MultiSelection); layout.addWidget(self.mulligan_hand)
         row = QHBoxLayout(); self.keep_btn = QPushButton("KEEP"); self.keep_btn.setObjectName("Primary"); self.keep_btn.clicked.connect(lambda: self.dispatcher.send_mulligan_choice(True))
-        self.mull_btn = QPushButton("MULLIGAN"); self.mull_btn.setObjectName("Danger"); self.mull_btn.clicked.connect(lambda: self.dispatcher.send_mulligan_choice(False))
+        self.mull_btn = QPushButton("MULLIGAN"); self.mull_btn.setObjectName("Danger"); self.mull_btn.clicked.connect(self.on_mulligan)
         row.addWidget(self.keep_btn); row.addWidget(self.mull_btn); layout.addLayout(row)
         self.pages.addWidget(page)
 
@@ -116,9 +117,11 @@ class MainWindow(QMainWindow):
         self.cast_spell_btn = QPushButton("CAST SPELL"); self.cast_spell_btn.setObjectName("Primary"); self.cast_spell_btn.clicked.connect(self.on_cast_spell_clicked)
         self.activate_btn = QPushButton("ACTIVATE"); self.activate_btn.clicked.connect(self.on_activate_clicked)
         self.attack_btn = QPushButton("CONFIRM ATTACKERS"); self.attack_btn.clicked.connect(self.on_attack_clicked)
+        self.block_btn = QPushButton("CONFIRM BLOCKERS"); self.block_btn.clicked.connect(self.on_block_clicked)
+        self.order_btn = QPushButton("CONFIRM ORDER"); self.order_btn.clicked.connect(self.on_damage_order_clicked)
         self.suspend_btn = QPushButton("SUSPEND"); self.suspend_btn.clicked.connect(self.on_suspend_clicked)
         self.concede_btn = QPushButton("CONCEDE"); self.concede_btn.setObjectName("Danger"); self.concede_btn.clicked.connect(lambda: self.dispatcher.send_concede())
-        for button in (self.pass_btn, self.play_land_btn, self.cast_spell_btn, self.activate_btn, self.attack_btn, self.suspend_btn, self.concede_btn): actions.addWidget(button)
+        for button in (self.pass_btn, self.play_land_btn, self.cast_spell_btn, self.activate_btn, self.attack_btn, self.block_btn, self.order_btn, self.suspend_btn, self.concede_btn): actions.addWidget(button)
         layout.addLayout(actions); self.pages.addWidget(page)
 
     def connect_to_server(self):
@@ -158,6 +161,7 @@ class MainWindow(QMainWindow):
         self._refresh_lists(opponent)
         self._refresh_actions(phase)
         self._refresh_choice()
+        self._refresh_trigger_prompt()
         if getattr(self.state, "last_error", None):
             error = self.state.last_error
             self.log_text.setPlainText(f"{error.get('code', 'ERROR')}: {error.get('message', '')}")
@@ -179,6 +183,8 @@ class MainWindow(QMainWindow):
         self.pass_btn.setEnabled(usable or phase == "LOBBY"); self.play_land_btn.setEnabled(usable and phase in {"PRECOMBAT_MAIN", "POSTCOMBAT_MAIN"})
         self.cast_spell_btn.setEnabled(usable); self.activate_btn.setEnabled(usable)
         self.attack_btn.setEnabled(phase == "DECLARE_ATTACKERS" and self.state.active_player == self.state.pid)
+        self.block_btn.setEnabled(phase == "DECLARE_BLOCKERS" and self.state.active_player != self.state.pid)
+        self.order_btn.setEnabled(phase == "ASSIGN_DAMAGE_ORDER" and bool(self.state.pending_damage_orders))
         self.suspend_btn.setEnabled(usable and phase in {"PRECOMBAT_MAIN", "POSTCOMBAT_MAIN"})
         self.concede_btn.setEnabled(True)
 
@@ -190,7 +196,32 @@ class MainWindow(QMainWindow):
         if dialog.exec(): self.dispatcher.send_card_choice_response(**dialog.result)
         self._choice_dialog_open = False
 
+    def _refresh_trigger_prompt(self):
+        request = self.state.pending_request
+        if request is None or self._trigger_dialog_open:
+            return
+        self._trigger_dialog_open = True
+        if request.get("type") == "TRIGGER_ORDER":
+            ids = request.get("trigger_ids", [])
+            dialog = TriggerChoiceDialog("Trigger order", "Choose a trigger to place first.", ids, self)
+            if dialog.exec() and dialog.selected_option:
+                ordered = [dialog.selected_option] + [item for item in ids if item != dialog.selected_option]
+                self.dispatcher.send_trigger_order_response(ordered)
+        elif request.get("type") == "TRIGGER_CHOICE":
+            options = request.get("legal_targets", []) or ["Accept"]
+            dialog = TriggerChoiceDialog("Trigger choice", request.get("effect_summary", "Choose"), options, self)
+            if dialog.exec() and dialog.selected_option:
+                self.dispatcher.send_trigger_choice_response(
+                    request.get("trigger_id"), True,
+                    dialog.selected_option if request.get("requires_target") else None,
+                )
+        self._trigger_dialog_open = False
+
     def on_pass_clicked(self): self.dispatcher.send_priority_pass()
+
+    def on_mulligan(self):
+        cards = [item.text() for item in self.mulligan_hand.selectedItems()]
+        self.dispatcher.send_mulligan_choice(False, cards_to_bottom=cards)
 
     def on_play_land_clicked(self):
         item = self.hand_list.currentItem()
@@ -227,13 +258,37 @@ class MainWindow(QMainWindow):
 
     def on_activate_clicked(self):
         item = self.your_battlefield_list.currentItem()
-        if item: self.dispatcher.send_activate_ability(item.text().split(" ")[0], targets=[], cost_payment={"tap": True, "mana": {}})
+        if item:
+            source_id = item.text().split(" ")[0]
+            data = self.catalog.get_card_data(source_id) or {}
+            targets = self._select_target(source_id) if "target" in data.get("text", "").casefold() else []
+            self.dispatcher.send_activate_ability(source_id, targets=targets, cost_payment={"tap": True, "mana": {}})
 
     def on_attack_clicked(self):
         if self.state.phase != "DECLARE_ATTACKERS": return
         ids = [self.your_battlefield_list.item(i).text().split(" ")[0] for i in range(self.your_battlefield_list.count()) if self.your_battlefield_list.item(i).isSelected()]
         opponent = self.presenter.opponent_id()
         self.dispatcher.send_declare_attackers([{"creature_id": card_id, "target": opponent} for card_id in ids])
+
+    def on_block_clicked(self):
+        attackers = self.state.attackers or []
+        options = [item.get("creature_id") for item in attackers]
+        if not options:
+            self.dispatcher.send_declare_blockers([])
+            return
+        blockers = []
+        for item in self.your_battlefield_list.selectedItems():
+            attacker, ok = QInputDialog.getItem(self, "Block attacker", "Attacker:", options, 0, False)
+            if ok and attacker:
+                blockers.append({"creature_id": item.text().split(" ")[0], "blocking_id": attacker})
+        self.dispatcher.send_declare_blockers(blockers)
+
+    def on_damage_order_clicked(self):
+        for assignment in self.state.pending_damage_orders:
+            if isinstance(assignment, dict):
+                self.dispatcher.send_assign_damage_order(
+                    assignment.get("attacker_id"), assignment.get("blocker_ids", [])
+                )
 
     def on_suspend_clicked(self):
         item = self.hand_list.currentItem()
