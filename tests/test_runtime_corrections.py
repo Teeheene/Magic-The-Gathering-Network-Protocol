@@ -215,6 +215,118 @@ class TestRuntimeCorrections(unittest.TestCase):
         # Verify exactly one PRIORITY_GRANT sent during cast
         self.assertEqual(types.count("PRIORITY_GRANT"), 1)
 
+    def test_stack_resolution_reopens_priority_with_usable_token(self):
+        c1 = self.create_mock_client("alice", 1001)
+        c2 = self.create_mock_client("bob", 1002)
+        c1.hand = ["lightning_bolt_001"]
+        c1.battlefield = [{"id": "mountain_001", "tapped": False}]
+        self.mock_connection.clients = self.game.clients = [c1, c2]
+
+        sent_types = []
+        real_send = self.game.pdu_dispatcher._send
+        def track_send(client, pdu_type, **kwargs):
+            sent_types.append(pdu_type)
+            return real_send(client, pdu_type, **kwargs)
+        self.game.pdu_dispatcher._send = track_send
+
+        self.game.pdu_dispatcher.send_priority_grant(c1, "alice")
+        self.assertTrue(self.game.pdu_dispatcher.handle_cast_spell(c1, {
+            "type": "CAST_SPELL", "seq_num": c1.active_priority_seq_num,
+            "card_id": "lightning_bolt_001", "targets": ["bob"],
+            "mana_payment": {"R": 1},
+        }))
+        sent_types.clear()
+        self.assertTrue(self.game.pdu_dispatcher.handle_priority_pass(c1, {
+            "type": "PRIORITY_PASS", "seq_num": c1.active_priority_seq_num,
+        }))
+        sent_types.clear()
+        self.assertTrue(self.game.pdu_dispatcher.handle_priority_pass(c2, {
+            "type": "PRIORITY_PASS", "seq_num": c2.active_priority_seq_num,
+        }))
+
+        self.assertLess(sent_types.index("STACK_RESOLVE"), sent_types.index("GAME_STATE_UPDATE"))
+        self.assertLess(sent_types.index("GAME_STATE_UPDATE"), sent_types.index("PRIORITY_GRANT"))
+        self.assertEqual(sent_types.count("PRIORITY_GRANT"), 1)
+        self.assertEqual(self.game.priority_holder, "alice")
+        self.assertTrue(self.game.pdu_dispatcher.handle_priority_pass(c1, {
+            "type": "PRIORITY_PASS", "seq_num": c1.active_priority_seq_num,
+        }))
+
+    def test_etb_source_resolve_precedes_gray_merchant_trigger_and_priority(self):
+        c1 = self.create_mock_client("alice", 1001)
+        c2 = self.create_mock_client("bob", 1002)
+        c1.hand = ["gray_merchant_001"]
+        c1.battlefield = [
+            {"id": f"swamp_{index:03d}", "tapped": False}
+            for index in range(1, 6)
+        ]
+        self.mock_connection.clients = self.game.clients = [c1, c2]
+        sent = []
+        real_send = self.game.pdu_dispatcher._send
+        def track_send(client, pdu_type, **kwargs):
+            sent.append((pdu_type, kwargs))
+            return real_send(client, pdu_type, **kwargs)
+        self.game.pdu_dispatcher._send = track_send
+
+        self.game.pdu_dispatcher.send_priority_grant(c1, "alice")
+        self.game.pdu_dispatcher.handle_cast_spell(c1, {
+            "type": "CAST_SPELL", "seq_num": c1.active_priority_seq_num,
+            "card_id": "gray_merchant_001", "targets": [],
+            "mana_payment": {"B": 2, "X": 3},
+        })
+        source_stack_id = self.game.stack[0]["stack_item_id"]
+        self.game.pdu_dispatcher.handle_priority_pass(c1, {
+            "type": "PRIORITY_PASS", "seq_num": c1.active_priority_seq_num,
+        })
+        sent.clear()
+        self.game.pdu_dispatcher.handle_priority_pass(c2, {
+            "type": "PRIORITY_PASS", "seq_num": c2.active_priority_seq_num,
+        })
+
+        source_resolve = next(i for i, entry in enumerate(sent)
+                              if entry[0] == "STACK_RESOLVE" and entry[1].get("stack_item_id") == source_stack_id)
+        for index, (pdu_type, _) in enumerate(sent):
+            if pdu_type in {"STACK_PUSH", "PRIORITY_GRANT"}:
+                self.assertGreater(index, source_resolve)
+
+    def test_etb_source_resolve_precedes_gravedigger_trigger_prompt(self):
+        c1 = self.create_mock_client("alice", 1001)
+        c2 = self.create_mock_client("bob", 1002)
+        c1.hand = ["gravedigger_001"]
+        c1.graveyard = ["grizzly_bears_001"]
+        c1.battlefield = [
+            {"id": f"swamp_{index:03d}", "tapped": False}
+            for index in range(1, 5)
+        ]
+        self.mock_connection.clients = self.game.clients = [c1, c2]
+        sent = []
+        real_send = self.game.pdu_dispatcher._send
+        def track_send(client, pdu_type, **kwargs):
+            sent.append((pdu_type, kwargs))
+            return real_send(client, pdu_type, **kwargs)
+        self.game.pdu_dispatcher._send = track_send
+
+        self.game.pdu_dispatcher.send_priority_grant(c1, "alice")
+        self.game.pdu_dispatcher.handle_cast_spell(c1, {
+            "type": "CAST_SPELL", "seq_num": c1.active_priority_seq_num,
+            "card_id": "gravedigger_001", "targets": [],
+            "mana_payment": {"B": 1, "X": 3},
+        })
+        source_stack_id = self.game.stack[0]["stack_item_id"]
+        self.game.pdu_dispatcher.handle_priority_pass(c1, {
+            "type": "PRIORITY_PASS", "seq_num": c1.active_priority_seq_num,
+        })
+        sent.clear()
+        self.assertFalse(self.game.pdu_dispatcher.handle_priority_pass(c2, {
+            "type": "PRIORITY_PASS", "seq_num": c2.active_priority_seq_num,
+        }))
+
+        source_resolve = next(i for i, entry in enumerate(sent)
+                              if entry[0] == "STACK_RESOLVE" and entry[1].get("stack_item_id") == source_stack_id)
+        prompt = next(i for i, entry in enumerate(sent) if entry[0] == "TRIGGER_CHOICE")
+        self.assertLess(source_resolve, prompt)
+        self.assertFalse(any(pdu_type == "PRIORITY_GRANT" for pdu_type, _ in sent))
+
     def test_priority_timeout_reason_disconnect(self):
         """Req 9: Priority deadline expiration results in GAME_OVER reason DISCONNECT via check_priority_timeout."""
         c1 = self.create_mock_client("alice", 1001)
@@ -313,8 +425,8 @@ class TestRuntimeCorrections(unittest.TestCase):
         res2 = self.game.pdu_dispatcher.handle_concede(c1, {"type": "CONCEDE", "seq_num": 999, "player_id": "alice"})
         self.assertFalse(res2)
 
-        # Valid player_id and seq_num -> accepts and ends game
-        res3 = self.game.pdu_dispatcher.handle_concede(c1, {"type": "CONCEDE", "seq_num": 15, "player_id": "alice"})
+        # The stale-action ERROR is now the most recent server PDU.
+        res3 = self.game.pdu_dispatcher.handle_concede(c1, {"type": "CONCEDE", "seq_num": 999, "player_id": "alice"})
         self.assertTrue(res3)
         self.assertTrue(self.game.game_over)
 
@@ -334,6 +446,41 @@ class TestRuntimeCorrections(unittest.TestCase):
         self.game.pdu_dispatcher.handle_priority_pass(c1, {"type": "PRIORITY_PASS", "seq_num": c1.active_priority_seq_num})
         self.game.pdu_dispatcher.handle_priority_pass(c2, {"type": "PRIORITY_PASS", "seq_num": c2.active_priority_seq_num})
         self.assertEqual(self.game.phase, "END_OF_COMBAT")
+
+    def test_combat_damage_result_precedes_state_and_priority(self):
+        c1 = self.create_mock_client("alice", 1001)
+        c2 = self.create_mock_client("bob", 1002)
+        c1.battlefield = [{
+            "id": "grizzly_bears_001", "tapped": True,
+            "power": 2, "toughness": 2, "damage": 0,
+        }]
+        c2.battlefield = [{
+            "id": "savannah_lions_001", "tapped": False,
+            "power": 2, "toughness": 1, "damage": 0,
+        }]
+        self.mock_connection.clients = self.game.clients = [c1, c2]
+        self.game.active_player = "alice"
+        self.game.attackers = [{"creature_id": "grizzly_bears_001", "target": "bob"}]
+        self.game.blockers = [{"creature_id": "savannah_lions_001", "blocking_id": "grizzly_bears_001"}]
+
+        sent = []
+        real_send = self.game.pdu_dispatcher._send
+        def track_send(client, pdu_type, **kwargs):
+            sent.append((pdu_type, kwargs))
+            return real_send(client, pdu_type, **kwargs)
+        self.game.pdu_dispatcher._send = track_send
+
+        self.assertTrue(self.game.resolve_combat_damage(False))
+        types = [pdu_type for pdu_type, _ in sent]
+        result_index = types.index("COMBAT_DAMAGE_RESULT")
+        self.assertLess(result_index, types.index("GAME_STATE_UPDATE"))
+        self.assertLess(types.index("GAME_STATE_UPDATE"), types.index("PRIORITY_GRANT"))
+        result = next(payload for pdu_type, payload in sent if pdu_type == "COMBAT_DAMAGE_RESULT")
+        self.assertCountEqual(
+            result["creatures_died"],
+            ["grizzly_bears_001", "savannah_lions_001"],
+        )
+        self.assertIn("savannah_lions_001", c2.graveyard)
 
     def test_rod_of_ruin_resolution(self):
         """Item 12: Rod of Ruin deals 1 damage to target player or creature."""
@@ -482,8 +629,9 @@ class TestRuntimeCorrections(unittest.TestCase):
         res1 = self.game.pdu_dispatcher.handle_concede(c1, stale_concede)
         self.assertFalse(res1)
 
-        # CONCEDE using latest client.seq_num -> accepted
-        valid_concede = {"type": "CONCEDE", "player_id": "alice", "seq_num": latest_server_token}
+        # The rejected attempt produced an ERROR with its echoed seq_num, which
+        # is now the most recent server PDU and therefore the valid token.
+        valid_concede = {"type": "CONCEDE", "player_id": "alice", "seq_num": old_priority_token}
         res2 = self.game.pdu_dispatcher.handle_concede(c1, valid_concede)
         self.assertTrue(res2)
 
@@ -527,6 +675,9 @@ class TestRuntimeCorrections(unittest.TestCase):
         # Stack top trigger should be tids[0] (pushed second, so on top)
         self.assertEqual(self.game.stack[-1]["trigger_id"], tids[0])
         self.assertEqual(self.game.stack[-2]["trigger_id"], tids[1])
+        self.assertEqual(self.game.phase, "DECLARE_ATTACKERS")
+        self.assertEqual(self.game.priority_holder, "alice")
+        self.assertIsNotNone(c1.active_priority_seq_num)
 
     def test_trigger_order_response_preserves_other_batches(self):
         """Pass #3 Item 3B: Reordering batch A preserves same-controller triggers in batch B."""

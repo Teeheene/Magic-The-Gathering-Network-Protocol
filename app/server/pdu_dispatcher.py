@@ -703,6 +703,15 @@ class PduDispatcher:
         self.server.attackers = list(attackers)
         self.server.attackers_declared = True
 
+        for permanent in attacking_permanents:
+            if isinstance(permanent, dict):
+                keywords = {
+                    str(k).casefold().replace("_", " ")
+                    for k in permanent.get("keywords", [])
+                }
+                if "vigilance" not in keywords:
+                    permanent["tapped"] = True
+
         from app.server.engine.triggers import GameEvent
         events = [
             GameEvent("attacker_declared", {
@@ -714,16 +723,9 @@ class PduDispatcher:
             for att in attackers
         ]
         if events:
-            self.server.post_event(events)
+            self.server.pending_event_continuation = self.server.after_attackers_declared
+            return self.server.post_event(events)
 
-        for permanent in attacking_permanents:
-            if isinstance(permanent, dict):
-                keywords = {
-                    str(k).casefold().replace("_", " ")
-                    for k in permanent.get("keywords", [])
-                }
-                if "vigilance" not in keywords:
-                    permanent["tapped"] = True
         self._broadcast_game_state()
         return self.server.after_attackers_declared()
 
@@ -961,7 +963,10 @@ class PduDispatcher:
             )
 
         seq_num = pdu.get("seq_num")
-        if seq_num is None or seq_num != getattr(client, "seq_num", None):
+        expected_seq = getattr(client, "last_sent_pdu_seq_num", None)
+        if expected_seq is None:
+            expected_seq = getattr(client, "seq_num", None)
+        if seq_num is None or seq_num != expected_seq:
             return self.send_error(
                 client,
                 "CONCEDE seq_num does not match active sequence token.",
@@ -1124,6 +1129,22 @@ class PduDispatcher:
             self.send_stack_resolve(client, stack_item_id, result, state_changes)
 
 
+    def broadcast_combat_damage_result(
+        self,
+        damage_events,
+        life_totals,
+        creatures_died=None,
+        game_over_result=None
+    ):
+        for client in list(self.server.clients):
+            self.send_combat_damage_result(
+                client,
+                damage_events,
+                life_totals,
+                creatures_died,
+                game_over_result
+            )
+
     def send_combat_damage_result(
         self,
         client,
@@ -1209,6 +1230,7 @@ class PduDispatcher:
             **payload
         }
         client.send(pdu)
+        client.last_sent_pdu_seq_num = seq_num
 
         if update_client_seq:
             client.seq_num = seq_num

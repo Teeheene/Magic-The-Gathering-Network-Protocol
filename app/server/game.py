@@ -43,6 +43,7 @@ class Game:
         self.pending_damage_orders = set()
         self.attackers_declared = False
         self.blockers_declared = False
+        self.pending_event_continuation = None
         self.next_stack_item_id = 1
         self.event_bus = EventBus()
         self.trigger_manager = TriggerManager(self, self.card_catalog)
@@ -693,7 +694,7 @@ class Game:
                 return True
         return False
 
-    def post_event(self, events=None):
+    def post_event(self, events=None, sba_result=None):
         """Canonical post-event pipeline per MTG rules & RFC requirements."""
         batch_id = self.trigger_manager.generate_batch_id() if events is not None else None
         if events is not None:
@@ -705,7 +706,10 @@ class Game:
                     self.trigger_manager.pending_triggers.append(trg)
 
         # 1. Run State-Based Actions
-        changes, game_over_info = StateBasedActions.check_and_apply(self)
+        if sba_result is None:
+            changes, game_over_info = StateBasedActions.check_and_apply(self)
+        else:
+            changes, game_over_info = sba_result
         for change in changes:
             if change.get("type") == "CREATURE_DIED":
                 death_event = GameEvent("creature_died", change)
@@ -801,6 +805,11 @@ class Game:
         # 4. Broadcast updated game state
         self.pdu_dispatcher._broadcast_game_state()
 
+        continuation = self.pending_event_continuation
+        if continuation is not None:
+            self.pending_event_continuation = None
+            return continuation()
+
         # 5. Grant priority ONLY when no mandatory decision is pending
         if self.priority_holder and not self.has_pending_decision():
             client = self.client_for_player(self.priority_holder)
@@ -836,6 +845,11 @@ class Game:
 
         ctrl_client = self.client_for_player(controller)
         opp_client = self.other_client(ctrl_client) if ctrl_client else None
+        resolution_events = None
+
+        # Both passes clear the old holder. Every completed stack resolution
+        # starts a fresh priority window with the active player.
+        self.priority_holder = self.active_player
 
         if item_type == "TRIGGER_ABILITY":
             fn = item.get("effect_fn")
@@ -875,14 +889,17 @@ class Game:
                         "damage": 0
                     }
                     ctrl_client.battlefield.append(perm)
-                    self.post_event(GameEvent("permanent_entered", {"creature_id": source_id, "controller": controller}))
+                    resolution_events = GameEvent(
+                        "permanent_entered",
+                        {"creature_id": source_id, "controller": controller},
+                    )
             else:
                 if ctrl_client:
                     ctrl_client.graveyard.append(source_id)
 
             self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), status, changes)
 
-        return self.post_event()
+        return self.post_event(resolution_events)
 
     def get_effective_pt(self, permanent):
         if not isinstance(permanent, dict):
@@ -987,8 +1004,29 @@ class Game:
                                 "amount": b_power
                             })
 
-        self.post_event(GameEvent("combat_damage_dealt", {"damage_events": damage_events}))
-        return self.open_priority_window()
+        sba_result = StateBasedActions.check_and_apply(self)
+        sba_changes, game_over_info = sba_result
+        creatures_died = [
+            change["card_id"]
+            for change in sba_changes
+            if change.get("type") == "CREATURE_DIED"
+        ]
+        life_totals = {
+            client.pid: client.life_total
+            for client in self.clients
+        }
+        self.pdu_dispatcher.broadcast_combat_damage_result(
+            damage_events,
+            life_totals,
+            creatures_died,
+            game_over_info,
+        )
+
+        self.priority_holder = self.active_player
+        return self.post_event(
+            GameEvent("combat_damage_dealt", {"damage_events": damage_events}),
+            sba_result=sba_result,
+        )
 
     def cleanup(self):
         self.priority_holder = None
