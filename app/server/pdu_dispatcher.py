@@ -19,6 +19,11 @@ ERR_INSUFFICIENT_MANA = "INSUFFICIENT_MANA"
 ERR_ILLEGAL_TARGET = "ILLEGAL_TARGET"
 ERR_TRIGGER_ORDER_INVALID = "TRIGGER_ORDER_INVALID"
 ERR_TRIGGER_CHOICE_INVALID = "TRIGGER_CHOICE_INVALID"
+ERR_CARD_CHOICE_INVALID = "CARD_CHOICE_INVALID"
+
+CARD_CHOICE_TYPES = {
+    "SELECT_CARDS", "SELECT_TARGETS", "ORDER_CARDS", "YES_NO", "COLOR", "PAY_MANA", "MADNESS_CAST",
+}
 
 MSG_DECK_TOO_LARGE = "Deck contains {count} cards; maximum is 50."
 MSG_EMPTY_PLAYER_ID = "player_id must be a non-empty string."
@@ -41,6 +46,8 @@ class PduDispatcher:
             "ACTIVATE_ABILITY": self.handle_activate_ability,
             "TRIGGER_ORDER_RESPONSE": self.handle_trigger_order_response,
             "TRIGGER_CHOICE_RESPONSE": self.handle_trigger_choice_response,
+            "CARD_CHOICE_RESPONSE": self.handle_card_choice_response,
+            "SUSPEND_CARD": self.handle_suspend_card,
             "DECLARE_ATTACKERS": self.handle_declare_attackers,
             "DECLARE_BLOCKERS": self.handle_declare_blockers,
             "ASSIGN_DAMAGE_ORDER": self.handle_assign_damage_order,
@@ -53,6 +60,13 @@ class PduDispatcher:
     def handle(self, client, pdu):
         pdu_type = pdu.get("type")
 
+        if self.server.has_pending_card_choice() and pdu_type not in {
+            "CARD_CHOICE_RESPONSE", "PING", "CONCEDE",
+        }:
+            return self.send_error(
+                client, "A mandatory card choice is pending.", ERR_ILLEGAL_ACTION, pdu
+            )
+
         handler = self.handlers.get(pdu_type)
         if handler is None:
             return self.send_error(
@@ -63,6 +77,51 @@ class PduDispatcher:
             )
 
         return handler(client, pdu)
+
+    def handle_card_choice_response(self, client, pdu):
+        pending = getattr(client, "pending_card_choice", None)
+        expected = getattr(client, "active_card_choice_seq_num", None)
+        if pending is None:
+            return self.send_error(client, "No card choice is pending for this player.", ERR_CARD_CHOICE_INVALID, pdu)
+        if pdu.get("player_id") != client.pid:
+            return self.send_error(client, "player_id does not match the deciding player.", ERR_CARD_CHOICE_INVALID, pdu)
+        if pdu.get("seq_num") != expected:
+            return self.send_error(client, "seq_num does not match the active card-choice token.", ERR_STALE_ACTION, pdu)
+        validator = pending.get("validator")
+        normalized = validator(pdu) if callable(validator) else None
+        if normalized is None:
+            return self.send_error(client, "Invalid card choice response.", ERR_CARD_CHOICE_INVALID, pdu)
+        continuation = pending.get("continuation")
+        client.pending_card_choice = None
+        client.active_card_choice_seq_num = None
+        if callable(continuation):
+            return continuation(normalized)
+        return True
+
+    def handle_suspend_card(self, client, pdu):
+        if not self._validate_priority_action(client, pdu):
+            return False
+        card_id = pdu.get("card_id")
+        payment = self.server.normalize_mana_payment(pdu.get("mana_payment"))
+        if pdu.get("player_id") != client.pid or card_id not in client.hand:
+            return self.send_error(client, "Invalid suspended card or player.", ERR_ILLEGAL_ACTION, pdu)
+        if self.server.base_card_id(card_id) != "rift_bolt":
+            return self.send_error(client, "This card has no supported Suspend action.", ERR_ILLEGAL_ACTION, pdu)
+        if client.pid != self.server.active_player or self.server.phase not in {"PRECOMBAT_MAIN", "POSTCOMBAT_MAIN"} or self.server.stack:
+            return self.send_error(client, "Suspend timing is not legal.", ERR_WRONG_PHASE, pdu)
+        if payment != {"R": 1}:
+            return self.send_error(client, "Suspend requires exact payment {R}.", ERR_INSUFFICIENT_MANA, pdu)
+        plan = self.server.plan_mana_payment(client, payment)
+        if plan is None:
+            return self.send_error(client, "Insufficient mana for Suspend.", ERR_INSUFFICIENT_MANA, pdu)
+        self.server.commit_mana_payment(client, plan)
+        client.hand.remove(card_id)
+        client.exile.append(card_id)
+        self.server.suspended_cards.append({"card_id": card_id, "owner": client.pid, "time_counters": 1})
+        self.server.consecutive_priority_passes = 0
+        self.server.pdu_dispatcher._broadcast_game_state()
+        self.server.priority_holder = client.pid
+        return self.server.grant_priority(client.pid)
 
     def build_error(self, message: str, code: str, pdu):
         seq_num = pdu.get("seq_num") if isinstance(pdu, dict) and isinstance(pdu.get("seq_num"), int) else getattr(self.server, "seq_num", 0)
@@ -324,6 +383,7 @@ class PduDispatcher:
         card_id = pdu.get("card_id")
         targets = pdu.get("targets")
         mana_payment = pdu.get("mana_payment")
+        mode = pdu.get("mode")
 
         if (
             not isinstance(card_id, str)
@@ -340,6 +400,12 @@ class PduDispatcher:
             return self.send_error(client, f"Unknown card_id: {card_id}", ERR_ILLEGAL_ACTION, pdu)
 
         card_type = card_data.get("card_type", "").casefold()
+        base_id = self.server.base_card_id(card_id)
+        if base_id == "healing_salve":
+            if mode not in {"GAIN_LIFE", "PREVENT_DAMAGE"}:
+                return self.send_error(client, "Healing Salve requires a valid mode.", ERR_ILLEGAL_ACTION, pdu)
+        elif mode is not None:
+            return self.send_error(client, "This spell does not accept a mode.", ERR_ILLEGAL_ACTION, pdu)
 
         # Reject Land via CAST_SPELL
         if "land" in card_type:
@@ -360,13 +426,12 @@ class PduDispatcher:
         if not self._validate_priority_action(client, pdu):
             return False
 
-        if not self.server.targets_are_legal(card_id, targets, controller_id=client.pid):
+        if not self.server.targets_are_legal(card_id, targets, controller_id=client.pid, mode=mode):
             return self.send_error(client, "The spell's targets are missing or illegal.", ERR_ILLEGAL_TARGET, pdu)
 
 
         expected_payment = self.server.card_mana_cost(card_id)
         declared_payment = self.server.normalize_mana_payment(mana_payment)
-        base_id = self.server.base_card_id(card_id)
         kicker_payment = {
             "goblin_bushwhacker": {"R": 2, "X": 1},
             "vines_of_vastwood": {"G": 2},
@@ -403,6 +468,7 @@ class PduDispatcher:
             "targets": list(targets),
             "mana_payment": dict(mana_payment),
             "kicked": kicker_payment is not None and declared_payment == kicker_payment,
+            "mode": mode,
         }
         self.server.commit_mana_payment(client, mana_payment_plan)
         client.hand.remove(card_id)
@@ -954,17 +1020,21 @@ class PduDispatcher:
             )
 
 
-        for card_id in card_ids:
-            client.hand.remove(card_id)
-            client.graveyard.append(card_id)
-        self._broadcast_game_state()
-        if (
-            self.server.phase == "CLEANUP"
-            and client.pid == self.server.active_player
-            and len(client.hand) <= 7
-        ):
-            return self.server.finish_cleanup()
-        return True
+        def finish_discard():
+            self._broadcast_game_state()
+            if any(item.get("madness") for item in self.server.stack):
+                self.server.pending_event_continuation = self.server.finish_cleanup
+                self.server.priority_holder = self.server.active_player
+                self.server.consecutive_priority_passes = 0
+                return self.server.grant_priority(self.server.active_player)
+            if (
+                self.server.phase == "CLEANUP"
+                and client.pid == self.server.active_player
+                and len(client.hand) <= 7
+            ):
+                return self.server.finish_cleanup()
+            return True
+        return self.server.discard_cards_with_madness(client, card_ids, finish_discard)
 
     def handle_concede(self, client, pdu):
         player_id = pdu.get("player_id")
@@ -1122,6 +1192,38 @@ class PduDispatcher:
             requires_target=getattr(trg, "requires_target", False),
             legal_targets=getattr(trg, "legal_targets", [])
         )
+
+    def send_card_choice_request(
+        self, client, source_card_id, choice_type, prompt,
+        min_choices=0, max_choices=0, options=None,
+        validator=None, continuation=None, **details
+    ):
+        if choice_type not in CARD_CHOICE_TYPES:
+            raise ValueError(f"Unsupported card choice type: {choice_type}")
+        safe_options = list(options or [])
+        client.pending_card_choice = {
+            "source_card_id": source_card_id,
+            "choice_type": choice_type,
+            "min_choices": min_choices,
+            "max_choices": max_choices,
+            "options": safe_options,
+            "validator": validator,
+            "continuation": continuation,
+        }
+        pdu = self._send(
+            client, "CARD_CHOICE_REQUEST",
+            player_id=client.pid,
+            source_card_id=source_card_id,
+            choice_type=choice_type,
+            prompt=prompt,
+            min_choices=min_choices,
+            max_choices=max_choices,
+            options=safe_options,
+            **details,
+        )
+        client.active_card_choice_seq_num = pdu["seq_num"]
+        self.server.priority_holder = None
+        return pdu
 
     def send_stack_resolve(
         self,

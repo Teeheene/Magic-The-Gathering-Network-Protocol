@@ -20,6 +20,8 @@ class ConnectedClient:
         self.phase_seq_num = None
         self.pending_trigger_ids = None
         self.pending_trigger_choice = None
+        self.active_card_choice_seq_num = None
+        self.pending_card_choice = None
         self.last_sent_pdu_seq_num = None
 
     def send(self, pdu):

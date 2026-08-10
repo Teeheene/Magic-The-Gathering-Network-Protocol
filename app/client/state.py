@@ -23,6 +23,8 @@ class ClientState:
         self.battlefield = {}
         self.graveyard = {}
         self.stack = []
+        self.exile = {}
+        self.suspended_cards = []
         self.land_played_this_turn = False
         self.attackers = []
         self.blockers = []
@@ -38,11 +40,13 @@ class ClientState:
         self.priority_seq_num = None
         self.phase_seq_num = None
         self.trigger_seq_num = None
+        self.card_choice_seq_num = None
         self.heartbeat_seq_num = 1
 
 
         #server prompts and results
         self.pending_request = None
+        self.pending_card_choice = None
         self.last_stack_resolution = None
         self.last_combat_damage_result = None
         self.last_pong_timestamp = None
@@ -67,6 +71,8 @@ class ClientState:
             self.battlefield = state_dict["battlefield"]
         if "stack" in state_dict:
             self.stack = state_dict["stack"]
+        if "exile" in state_dict:
+            self.exile = state_dict["exile"]
 
     def reset_for_lobby(self):
         self.phase = "LOBBY"
@@ -81,6 +87,8 @@ class ClientState:
         self.battlefield = {}
         self.graveyard = {}
         self.stack = []
+        self.exile = {}
+        self.suspended_cards = []
         self.land_played_this_turn = False
         self.attackers = []
         self.blockers = []
@@ -92,8 +100,10 @@ class ClientState:
         self.priority_seq_num = None
         self.phase_seq_num = None
         self.trigger_seq_num = None
+        self.card_choice_seq_num = None
 
         self.pending_request = None
+        self.pending_card_choice = None
         self.last_stack_resolution = None
         self.last_combat_damage_result = None
         self.is_game_over = False

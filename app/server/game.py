@@ -49,6 +49,8 @@ class Game:
         self.trigger_manager = TriggerManager(self, self.card_catalog)
         self.cant_gain_life_this_turn = False
         self.cant_prevent_damage_this_turn = False
+        self.suspended_cards = []
+        self.pending_event_continuation = None
         for client in getattr(self, "clients", []):
             client.ready_in_lobby = False
 
@@ -71,6 +73,8 @@ class Game:
         self.attackers_declared = False
         self.blockers_declared = False
         self.next_stack_item_id = 1
+        self.suspended_cards = []
+        self.pending_event_continuation = None
         self.game_over = False
 
         rng = getattr(self, "rng", random)
@@ -87,6 +91,10 @@ class Game:
             client.exile = []
             client.mulligan_taken = 0
             client.mulligan_kept = False
+            client.mana_pool = {}
+            client.damage_prevention_shield = 0
+            client.pending_card_choice = None
+            client.active_card_choice_seq_num = None
 
         if not self.transition_phase("GAME_SETUP"):
             return False
@@ -136,7 +144,7 @@ class Game:
             for item in self.stack
         )
 
-    def targets_are_legal(self, card_id, targets, is_ability=False, controller_id=None):
+    def targets_are_legal(self, card_id, targets, is_ability=False, controller_id=None, mode=None):
         card_data = self.card_data(card_id) or {}
         source_color = {
             "W": "white", "U": "blue", "B": "black", "R": "red", "G": "green",
@@ -161,6 +169,50 @@ class Game:
             return False
 
         target_id = targets[0]
+        any_target = {
+            "lightning_bolt", "shock", "searing_spear", "skullcrack", "rift_bolt",
+            "incinerate", "prodigal_sorcerer", "rod_of_ruin",
+        }
+        if base_id == "healing_salve":
+            if mode == "GAIN_LIFE":
+                return self.client_for_player(target_id) is not None
+            if mode == "PREVENT_DAMAGE":
+                if self.client_for_player(target_id) is not None:
+                    return True
+                owner, permanent = self.find_permanent(target_id)
+                if not isinstance(permanent, dict):
+                    return False
+                target_data = self.card_data(permanent.get("id", "")) or {}
+                if "creature" not in target_data.get("card_type", "").casefold():
+                    return False
+                keywords = self.permanent_keywords(permanent)
+                if "hexproof" in keywords and owner.pid != controller_id:
+                    return False
+                if "protection from white" in keywords and owner.pid != controller_id:
+                    return False
+                return not (
+                    owner.pid != controller_id
+                    and permanent.get("opponent_targeting_blocked_until_eot")
+                )
+            return False
+        if base_id in {"counterspell", "cancel", "mana_leak", "negate"}:
+            stack_item = next((item for item in self.stack if item.get("stack_item_id") == target_id), None)
+            if stack_item is None or stack_item.get("item_type") != "SPELL":
+                return False
+            if base_id == "negate":
+                target_card_data = self.card_data(stack_item.get("source", "")) or {}
+                if "creature" in target_card_data.get("card_type", "").casefold():
+                    return False
+            return True
+        if base_id in any_target:
+            if self.client_for_player(target_id) is not None:
+                return True
+            owner, permanent = self.find_permanent(target_id)
+            if not isinstance(permanent, dict):
+                return False
+            target_data = self.card_data(permanent.get("id", "")) or {}
+            if "creature" not in target_data.get("card_type", "").casefold():
+                return False
         if base_id == "raise_dead":
             controller = self.client_for_player(controller_id)
             if controller is None or target_id not in controller.graveyard:
@@ -182,6 +234,11 @@ class Game:
                 and target_owner.pid != controller_id
             ):
                 return False
+
+            if base_id == "mother_of_runes" and (
+                target_owner is None or target_owner.pid != controller_id
+            ):
+                return False
             if f"protection from {source_color}" in target_keywords:
                 return False
             if (
@@ -191,19 +248,7 @@ class Game:
             ):
                 return False
 
-        # Counterspells: target must be on stack
-        if base_id in {"counterspell", "cancel", "mana_leak", "negate"}:
-            stack_item = next(
-                (item for item in self.stack if item.get("stack_item_id") == target_id),
-                None,
-            )
-            if stack_item is None:
-                return False
-            if base_id == "negate":
-                target_source_id = stack_item.get("source", "")
-                target_card_data = self.card_data(target_source_id) or {}
-                if "creature" in target_card_data.get("card_type", "").casefold():
-                    return False
+        if base_id in any_target:
             return True
 
         # Player-only targets
@@ -212,7 +257,7 @@ class Game:
 
         # Creature-only targets
         if base_id in {
-            "flame_slash", "unsummon", "royal_assassin", "terror", "doom_blade"
+            "flame_slash", "unsummon", "royal_assassin", "terror", "doom_blade", "pacifism"
         } or "target creature" in text:
             owner, permanent = self.find_permanent(target_id)
             if permanent is None or not isinstance(permanent, dict):
@@ -240,7 +285,7 @@ class Game:
             perm_type = perm_data.get("card_type", "").casefold()
             return "artifact" in perm_type or "enchantment" in perm_type
 
-        return self.target_exists(target_id)
+        return False
 
 
 
@@ -419,6 +464,22 @@ class Game:
         client.life_total += amount
         return amount
 
+    def deal_damage_to_player(self, client, amount):
+        shield = getattr(client, "damage_prevention_shield", 0)
+        prevented = 0 if self.cant_prevent_damage_this_turn else min(shield, amount)
+        client.damage_prevention_shield = shield - prevented
+        dealt = amount - prevented
+        client.life_total -= dealt
+        return dealt
+
+    def deal_damage_to_permanent(self, permanent, amount):
+        shield = permanent.get("damage_prevention_shield", 0)
+        prevented = 0 if self.cant_prevent_damage_this_turn else min(shield, amount)
+        permanent["damage_prevention_shield"] = shield - prevented
+        dealt = amount - prevented
+        permanent["damage"] = permanent.get("damage", 0) + dealt
+        return dealt
+
     @staticmethod
     def tap_permanents(permanents):
         for permanent in permanents:
@@ -427,13 +488,13 @@ class Game:
     def deal_damage(self, target_id, amount):
         target_client = self.client_for_player(target_id)
         if target_client is not None:
-            target_client.life_total -= amount
-            return {"type": "DAMAGE", "target": target_id, "amount": amount}
+            dealt = self.deal_damage_to_player(target_client, amount)
+            return {"type": "DAMAGE", "target": target_id, "amount": dealt}
 
         _, permanent = self.find_permanent(target_id)
         if isinstance(permanent, dict) and permanent.get("toughness") is not None:
-            permanent["damage"] = permanent.get("damage", 0) + amount
-            return {"type": "DAMAGE", "target": target_id, "amount": amount}
+            dealt = self.deal_damage_to_permanent(permanent, amount)
+            return {"type": "DAMAGE", "target": target_id, "amount": dealt}
         return None
 
     def destroy_permanent(self, target_id, allow_regeneration=True):
@@ -667,8 +728,72 @@ class Game:
             return False
         return self.broadcast_game_state()
 
+    def _process_suspend_due_queue(self, queue):
+        if not queue:
+            self.priority_holder = self.active_player
+            self.consecutive_priority_passes = 0
+            if not self.broadcast_game_state():
+                return False
+            return self.grant_priority(self.active_player)
+        entry = queue[0]
+        owner = self.client_for_player(entry["owner"])
+        options = [client.pid for client in self.clients]
+        options.extend(
+            permanent.get("id")
+            for client in self.clients for permanent in client.battlefield
+            if isinstance(permanent, dict)
+            and "creature" in (self.card_data(permanent.get("id", "")) or {}).get("card_type", "").casefold()
+        )
+        options = [
+            target_id for target_id in options
+            if self.targets_are_legal(entry["card_id"], [target_id], controller_id=owner.pid)
+        ]
+
+        def validate_target(pdu):
+            selected = pdu.get("selected_targets")
+            if not isinstance(selected, list) or len(selected) != 1:
+                return None
+            return list(selected) if self.targets_are_legal(entry["card_id"], selected, controller_id=owner.pid) else None
+
+        def cast_suspended(selected):
+            if entry in self.suspended_cards:
+                self.suspended_cards.remove(entry)
+            if entry["card_id"] in owner.exile:
+                owner.exile.remove(entry["card_id"])
+            stack_item = {
+                "stack_item_id": self.pdu_dispatcher._next_stack_item_id(),
+                "item_type": "SPELL", "source": entry["card_id"],
+                "controller": owner.pid, "targets": selected,
+                "mana_payment": {}, "suspended": True,
+            }
+            self.stack.append(stack_item)
+            self.pdu_dispatcher.broadcast_stack_push(stack_item)
+            return self._process_suspend_due_queue(queue[1:])
+
+        if not options:
+            return cast_suspended([])
+        self.pdu_dispatcher.send_card_choice_request(
+            owner, entry["card_id"], "SELECT_TARGETS", "Choose a target for suspended Rift Bolt.",
+            1, 1, options, validator=validate_target, continuation=cast_suspended,
+        )
+        return False
+
     def upkeep(self):
-        return self.enter_priority_phase("UPKEEP")
+        if not self.transition_phase("UPKEEP"):
+            return False
+        due = []
+        for entry in self.suspended_cards:
+            if entry["owner"] == self.active_player:
+                entry["time_counters"] -= 1
+                if entry["time_counters"] <= 0:
+                    due.append(entry)
+        if due:
+            return self._process_suspend_due_queue(due)
+        self.priority_holder = self.active_player
+        self.consecutive_priority_passes = 0
+        if not self.broadcast_game_state():
+            return False
+        return self.grant_priority(self.active_player)
 
     def draw(self):
         if not self.transition_phase("DRAW"):
@@ -781,7 +906,81 @@ class Game:
         }
         if permanent.get("temporary_haste"):
             keywords.add("haste")
+        temporary_protection = permanent.get("temporary_protection")
+        if temporary_protection:
+            keywords.add(f"protection from {temporary_protection}")
         return keywords
+
+    @staticmethod
+    def basic_land_ids(cards, card_lookup):
+        return [
+            card_id for card_id in cards
+            if "basic" in (card_lookup(card_id) or {}).get("subtype", "").casefold()
+            and "land" in (card_lookup(card_id) or {}).get("card_type", "").casefold()
+        ]
+
+    @staticmethod
+    def exact_card_selection_validator(options, count):
+        offered = list(options)
+        def validate(pdu):
+            selected = pdu.get("selected_cards")
+            if not isinstance(selected, list) or len(selected) != count:
+                return None
+            if len(set(selected)) != len(selected) or any(card not in offered for card in selected):
+                return None
+            return list(selected)
+        return validate
+
+    def discard_cards_with_madness(self, client, card_ids, completion):
+        remaining = list(card_ids)
+
+        def advance():
+            if not remaining:
+                return completion()
+            card_id = remaining.pop(0)
+            client.hand.remove(card_id)
+            if self.base_card_id(card_id) != "reckless_wurm":
+                client.graveyard.append(card_id)
+                return advance()
+
+            client.exile.append(card_id)
+            def validate_madness(pdu):
+                cast = pdu.get("cast")
+                if not isinstance(cast, bool):
+                    return None
+                if not cast:
+                    return (False, None)
+                payment = self.normalize_mana_payment(pdu.get("mana_payment"))
+                if payment != {"R": 1, "X": 2}:
+                    return None
+                plan = self.plan_mana_payment(client, payment)
+                return (True, plan) if plan is not None else None
+
+            def finish_madness(decision):
+                cast, plan = decision
+                client.exile.remove(card_id)
+                if not cast:
+                    client.graveyard.append(card_id)
+                else:
+                    self.commit_mana_payment(client, plan)
+                    stack_item = {
+                        "stack_item_id": self.pdu_dispatcher._next_stack_item_id(),
+                        "item_type": "SPELL", "source": card_id,
+                        "controller": client.pid, "targets": [],
+                        "mana_payment": {"R": 1, "Generic": 2}, "madness": True,
+                    }
+                    self.stack.append(stack_item)
+                    self.pdu_dispatcher.broadcast_stack_push(stack_item)
+                return advance()
+
+            self.pdu_dispatcher.send_card_choice_request(
+                client, card_id, "MADNESS_CAST", "Cast Reckless Wurm for its Madness cost?",
+                0, 1, [], required_mana={"R": 1, "Generic": 2},
+                validator=validate_madness, continuation=finish_madness,
+            )
+            return False
+
+        return advance()
 
     def is_protected_from(self, target_permanent, source_permanent):
         if not isinstance(target_permanent, dict) or not isinstance(source_permanent, dict):
@@ -941,11 +1140,19 @@ class Game:
         if bool(getattr(self, "pending_damage_orders", None)):
             return True
         for client in getattr(self, "clients", []):
+            if getattr(client, "pending_card_choice", None) is not None:
+                return True
             if getattr(client, "pending_trigger_choice", None) is not None:
                 return True
             if getattr(client, "pending_trigger_ids", None) is not None:
                 return True
         return False
+
+    def has_pending_card_choice(self) -> bool:
+        return any(
+            getattr(client, "pending_card_choice", None) is not None
+            for client in getattr(self, "clients", [])
+        )
 
     def other_player(self, player_id: str) -> Optional[str]:
         for c in self.clients:
@@ -977,22 +1184,241 @@ class Game:
             self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), "RESOLVED", [])
         elif item_type == "ABILITY":
             base_id = self.base_card_id(source_id)
-            if targets and not self.targets_are_legal(source_id, targets, is_ability=True):
+            if targets and not self.targets_are_legal(
+                source_id, targets, is_ability=True, controller_id=controller
+            ):
                 self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), "FIZZLE", [])
                 return self.post_event()
+
+            if base_id == "merfolk_looter":
+                if ctrl_client.library:
+                    ctrl_client.hand.append(ctrl_client.library.pop(0))
+                options = list(ctrl_client.hand)
+                count = min(1, len(options))
+                if count:
+                    def finish_loot(selected):
+                        card_id = selected[0]
+                        def complete_loot():
+                            self.pdu_dispatcher.broadcast_stack_resolve(item["stack_item_id"], "RESOLVED", [
+                                {"type": "DRAW_DISCARD", "player": controller}
+                            ])
+                            return self.post_event()
+                        return self.discard_cards_with_madness(ctrl_client, [card_id], complete_loot)
+                    self.pdu_dispatcher.send_card_choice_request(
+                        ctrl_client, source_id, "SELECT_CARDS", "Choose one card to discard.",
+                        1, 1, options,
+                        validator=self.exact_card_selection_validator(options, 1),
+                        continuation=finish_loot,
+                    )
+                    return False
+            elif base_id == "mother_of_runes":
+                colors = ["WHITE", "BLUE", "BLACK", "RED", "GREEN"]
+                def validate_color(pdu):
+                    color = pdu.get("color")
+                    return color if color in colors else None
+                def finish_mother(color):
+                    _, permanent = self.find_permanent(targets[0])
+                    if permanent:
+                        permanent["temporary_protection"] = color.casefold()
+                    self.pdu_dispatcher.broadcast_stack_resolve(item["stack_item_id"], "RESOLVED", [
+                        {"type": "TEMP_PROTECTION", "target": targets[0], "color": color}
+                    ])
+                    return self.post_event()
+                self.pdu_dispatcher.send_card_choice_request(
+                    ctrl_client, source_id, "COLOR", "Choose a protection color.",
+                    1, 1, colors, validator=validate_color, continuation=finish_mother,
+                )
+                return False
 
             status, changes = CardEffects.resolve_ability_effect(base_id, source_id, targets, ctrl_client, opp_client, self)
             self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), status, changes)
         elif item_type == "SPELL":
             base_id = self.base_card_id(source_id)
             if targets and not self.targets_are_legal(
-                source_id, targets, controller_id=controller
+                source_id, targets, controller_id=controller, mode=item.get("mode")
             ):
                 # Spell FIZZLES
                 if ctrl_client:
                     ctrl_client.graveyard.append(source_id)
                 self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), "FIZZLE", [])
                 return self.post_event()
+
+            def finish_choice_spell(changes):
+                if ctrl_client and source_id not in ctrl_client.graveyard:
+                    ctrl_client.graveyard.append(source_id)
+                self.pdu_dispatcher.broadcast_stack_resolve(item["stack_item_id"], "RESOLVED", changes)
+                return self.post_event()
+
+            if base_id == "ponder":
+                viewed = list(ctrl_client.library[:3])
+                if not viewed:
+                    return finish_choice_spell([])
+                def finish_ponder(answer):
+                    if answer[0]:
+                        getattr(self, "rng", random).shuffle(ctrl_client.library)
+                    drawn = ctrl_client.library.pop(0) if ctrl_client.library else None
+                    if drawn is not None:
+                        ctrl_client.hand.append(drawn)
+                    return finish_choice_spell([{"type": "DRAW", "player": controller}])
+                def request_shuffle(ordered):
+                    ctrl_client.library[:len(viewed)] = ordered
+                    self.pdu_dispatcher.send_card_choice_request(
+                        ctrl_client, source_id, "YES_NO", "Shuffle your library?",
+                        1, 1, [True, False],
+                        validator=lambda pdu: (pdu.get("answer"),) if isinstance(pdu.get("answer"), bool) else None,
+                        continuation=finish_ponder,
+                    )
+                    return False
+                def validate_order(pdu):
+                    ordered = pdu.get("ordered_cards")
+                    if not isinstance(ordered, list) or len(ordered) != len(viewed):
+                        return None
+                    if len(set(ordered)) != len(ordered) or sorted(ordered) != sorted(viewed):
+                        return None
+                    return list(ordered)
+                self.pdu_dispatcher.send_card_choice_request(
+                    ctrl_client, source_id, "ORDER_CARDS", "Order the cards from top to bottom.",
+                    len(viewed), len(viewed), viewed,
+                    validator=validate_order, continuation=request_shuffle,
+                )
+                return False
+
+            if base_id == "mana_leak":
+                target_item = next(
+                    (candidate for candidate in self.stack if candidate.get("stack_item_id") == targets[0]),
+                    None,
+                )
+                if target_item is None:
+                    if ctrl_client:
+                        ctrl_client.graveyard.append(source_id)
+                    self.pdu_dispatcher.broadcast_stack_resolve(item["stack_item_id"], "FIZZLE", [])
+                    return self.post_event()
+                target_controller = self.client_for_player(target_item.get("controller"))
+                def validate_mana_leak(pdu):
+                    pay = pdu.get("pay")
+                    if not isinstance(pay, bool):
+                        return None
+                    if not pay:
+                        return (False, None)
+                    payment = self.normalize_mana_payment(pdu.get("mana_payment"))
+                    if payment != {"X": 3}:
+                        return None
+                    plan = self.plan_mana_payment(target_controller, payment)
+                    return (True, plan) if plan is not None else None
+                def finish_mana_leak(decision):
+                    pay, plan = decision
+                    changes = []
+                    if pay:
+                        self.commit_mana_payment(target_controller, plan)
+                        changes.append({"type": "PAY_MANA", "player": target_controller.pid, "amount": 3})
+                    else:
+                        self.stack.remove(target_item)
+                        if target_item.get("item_type") == "SPELL":
+                            target_controller.graveyard.append(target_item.get("source"))
+                        changes.append({"type": "COUNTER_SPELL", "stack_item_id": targets[0]})
+                    return finish_choice_spell(changes)
+                self.pdu_dispatcher.send_card_choice_request(
+                    target_controller, source_id, "PAY_MANA", "Pay 3 mana to prevent the spell from being countered?",
+                    0, 1, [], required_mana={"Generic": 3},
+                    validator=validate_mana_leak, continuation=finish_mana_leak,
+                )
+                return False
+
+            if base_id == "mind_rot":
+                target_client = self.client_for_player(targets[0])
+                options = list(target_client.hand)
+                count = min(2, len(options))
+                if count == 0:
+                    return finish_choice_spell([])
+                def finish_mind_rot(selected):
+                    return self.discard_cards_with_madness(
+                        target_client, selected,
+                        lambda: finish_choice_spell([{"type": "DISCARD", "player": target_client.pid, "count": len(selected)}]),
+                    )
+                self.pdu_dispatcher.send_card_choice_request(
+                    target_client, source_id, "SELECT_CARDS", f"Choose {count} card(s) to discard.",
+                    count, count, options,
+                    validator=self.exact_card_selection_validator(options, count),
+                    continuation=finish_mind_rot,
+                )
+                return False
+
+            if base_id == "healing_salve":
+                mode = item.get("mode")
+                target_id = targets[0]
+                changes = []
+                if mode == "GAIN_LIFE":
+                    target_client = self.client_for_player(target_id)
+                    gained = self.gain_life(target_client, 3)
+                    changes.append({"type": "LIFE_GAIN", "target": target_id, "amount": gained})
+                else:
+                    target_client = self.client_for_player(target_id)
+                    if target_client is not None:
+                        target_client.damage_prevention_shield = getattr(target_client, "damage_prevention_shield", 0) + 3
+                    else:
+                        _, target_permanent = self.find_permanent(target_id)
+                        target_permanent["damage_prevention_shield"] = target_permanent.get("damage_prevention_shield", 0) + 3
+                    changes.append({"type": "DAMAGE_PREVENTION_SHIELD", "target": target_id, "amount": 3})
+                return finish_choice_spell(changes)
+
+            if base_id == "rampant_growth":
+                options = self.basic_land_ids(ctrl_client.library, self.card_data)
+                if not options:
+                    randomizer = getattr(self, "rng", random)
+                    randomizer.shuffle(ctrl_client.library)
+                    return finish_choice_spell([])
+                def finish_growth(selected):
+                    card_id = selected[0]
+                    ctrl_client.library.remove(card_id)
+                    ctrl_client.battlefield.append({"id": card_id, "tapped": True})
+                    getattr(self, "rng", random).shuffle(ctrl_client.library)
+                    return finish_choice_spell([{"type": "SEARCH_LAND", "player": controller}])
+                self.pdu_dispatcher.send_card_choice_request(
+                    ctrl_client, source_id, "SELECT_CARDS", "Choose a basic land.",
+                    1, 1, options,
+                    validator=self.exact_card_selection_validator(options, 1),
+                    continuation=finish_growth,
+                )
+                return False
+
+            if base_id == "path_to_exile":
+                owner, permanent = self.find_permanent(targets[0])
+                changes = []
+                if owner and permanent:
+                    owner.battlefield.remove(permanent)
+                    owner.exile.append(targets[0])
+                    changes.append({"type": "EXILE", "target": targets[0]})
+                if owner is None:
+                    return finish_choice_spell(changes)
+                def finish_path_search(selected):
+                    if selected:
+                        land_id = selected[0]
+                        owner.library.remove(land_id)
+                        owner.battlefield.append({"id": land_id, "tapped": True})
+                    getattr(self, "rng", random).shuffle(owner.library)
+                    return finish_choice_spell(changes + ([{"type": "SEARCH_LAND", "player": owner.pid}] if selected else []))
+                def finish_path_yes_no(answer):
+                    answer = answer[0]
+                    if not answer:
+                        return finish_choice_spell(changes)
+                    options = self.basic_land_ids(owner.library, self.card_data)
+                    if not options:
+                        getattr(self, "rng", random).shuffle(owner.library)
+                        return finish_choice_spell(changes)
+                    self.pdu_dispatcher.send_card_choice_request(
+                        owner, source_id, "SELECT_CARDS", "Choose a basic land.",
+                        1, 1, options,
+                        validator=self.exact_card_selection_validator(options, 1),
+                        continuation=finish_path_search,
+                    )
+                    return False
+                self.pdu_dispatcher.send_card_choice_request(
+                    owner, source_id, "YES_NO", "Search your library for a basic land?",
+                    1, 1, [True, False],
+                    validator=lambda pdu: (pdu.get("answer"),) if isinstance(pdu.get("answer"), bool) else None,
+                    continuation=finish_path_yes_no,
+                )
+                return False
 
             status, changes = CardEffects.resolve_card_effect(
                 base_id, source_id, targets, ctrl_client, opp_client, self,
@@ -1074,11 +1500,11 @@ class Game:
             if not assigned_blockers and attacker_eligible and attacker_power > 0:
                 target_client = self.client_for_player(attacker["target"])
                 if target_client is not None:
-                    target_client.life_total -= attacker_power
+                    dealt = self.deal_damage_to_player(target_client, attacker_power)
                     damage_events.append({
                         "source": attacker_id,
                         "target": target_client.pid,
-                        "amount": attacker_power
+                        "amount": dealt
                     })
                 continue
 
@@ -1105,13 +1531,11 @@ class Game:
                 if assigned_damage > 0:
                     remaining_damage -= assigned_damage
                     if not self.is_protected_from(blocker_permanent, attacker_permanent):
-                        blocker_permanent["damage"] = (
-                            blocker_permanent.get("damage", 0) + assigned_damage
-                        )
+                        dealt = self.deal_damage_to_permanent(blocker_permanent, assigned_damage)
                         damage_events.append({
                             "source": attacker_id,
                             "target": blocker_id,
-                            "amount": assigned_damage
+                            "amount": dealt
                         })
 
             for blocker in assigned_blockers:
@@ -1128,14 +1552,12 @@ class Game:
                     )
                     if blocker_eligible and not self.is_protected_from(attacker_permanent, blocker_permanent):
                         b_power, _ = self.get_effective_pt(blocker_permanent)
-                        attacker_permanent["damage"] = (
-                            attacker_permanent.get("damage", 0) + b_power
-                        )
+                        dealt = self.deal_damage_to_permanent(attacker_permanent, b_power)
                         if b_power > 0:
                             damage_events.append({
                                 "source": blocker_id,
                                 "target": attacker_id,
-                                "amount": b_power
+                                "amount": dealt
                             })
 
         sba_result = StateBasedActions.check_and_apply(self)
@@ -1186,6 +1608,7 @@ class Game:
         self.cant_prevent_damage_this_turn = False
         for client in self.clients:
             client.mana_pool = {}
+            client.damage_prevention_shield = 0
             for permanent in client.battlefield:
                 if isinstance(permanent, dict):
                     permanent["damage"] = 0
@@ -1195,6 +1618,8 @@ class Game:
                     permanent["regeneration_shield"] = False
                     permanent.pop("opponent_targeting_blocked_until_eot", None)
                     permanent.pop("temporary_haste", None)
+                    permanent.pop("temporary_protection", None)
+                    permanent.pop("damage_prevention_shield", None)
 
         active_client = self.client_for_player(self.active_player)
         next_client = self.other_client(active_client)

@@ -560,6 +560,35 @@ def handle_automatic_phase(dispatcher, previous_seq_num):
     wait_for_update(dispatcher, previous_seq_num)
 
 
+def handle_card_choice(dispatcher, previous_seq_num):
+    request = dispatcher.state.pending_card_choice or {}
+    choice_type = request.get("choice_type")
+    print(f"> {request.get('prompt', 'Card choice required')}")
+    options = request.get("options", [])
+    if options:
+        print("> Options: " + ", ".join(str(option) for option in options))
+    if choice_type == "SELECT_CARDS":
+        response = {"selected_cards": input("> Card ID(s): ").strip().split()}
+    elif choice_type == "SELECT_TARGETS":
+        response = {"selected_targets": input("> Target ID: ").strip().split()}
+    elif choice_type == "ORDER_CARDS":
+        response = {"ordered_cards": input("> Top-to-bottom card IDs: ").strip().split()}
+    elif choice_type == "YES_NO":
+        response = {"answer": input("> Yes? [y/N]: ").strip().casefold() == "y"}
+    elif choice_type == "COLOR":
+        response = {"color": input("> Color: ").strip().upper()}
+    elif choice_type in {"PAY_MANA", "MADNESS_CAST"}:
+        pay = input("> Pay/cast? [y/N]: ").strip().casefold() == "y"
+        response = {"pay" if choice_type == "PAY_MANA" else "cast": pay}
+        if pay:
+            response["mana_payment"] = dict(request.get("required_mana", {}))
+    else:
+        print("> Unsupported card choice type.")
+        return
+    dispatcher.send_card_choice_response(**response)
+    wait_for_update(dispatcher, previous_seq_num)
+
+
 def game_screen(dispatcher):
     while dispatcher.connection.running:
         if dispatcher.state.is_game_over:
@@ -572,6 +601,10 @@ def game_screen(dispatcher):
         display_game_state(dispatcher.state)
         phase = dispatcher.state.phase
         previous_seq_num = dispatcher.state.latest_seq_num
+
+        if dispatcher.state.pending_card_choice is not None:
+            handle_card_choice(dispatcher, previous_seq_num)
+            continue
 
         if phase == "CLEANUP":
             handle_cleanup_phase(dispatcher, previous_seq_num)

@@ -14,6 +14,7 @@ class PduDispatcher:
             "STACK_PUSH": self.handle_stack_push,
             "TRIGGER_ORDER": self.handle_trigger_order,
             "TRIGGER_CHOICE": self.handle_trigger_choice,
+            "CARD_CHOICE_REQUEST": self.handle_card_choice_request,
             "STACK_RESOLVE": self.handle_stack_resolve,
             "COMBAT_DAMAGE_RESULT": self.handle_combat_damage_result,
             "GAME_OVER": self.handle_game_over,
@@ -65,6 +66,7 @@ class PduDispatcher:
             "battlefield",
             "graveyard",
             "stack",
+            "suspended_cards",
             "land_played_this_turn",
             "attackers",
             "blockers",
@@ -102,6 +104,8 @@ class PduDispatcher:
         self.state.priority_holder = pdu.get("player_id")
 
     def handle_stack_push(self, pdu):
+        self.state.pending_card_choice = None
+        self.state.card_choice_seq_num = None
         stack_item = {
             key: deepcopy(value)
             for key, value in pdu.items()
@@ -117,7 +121,13 @@ class PduDispatcher:
         self.state.trigger_seq_num = pdu["seq_num"]
         self.state.pending_request = deepcopy(pdu)
 
+    def handle_card_choice_request(self, pdu):
+        self.state.card_choice_seq_num = pdu["seq_num"]
+        self.state.pending_card_choice = deepcopy(pdu)
+
     def handle_stack_resolve(self, pdu):
+        self.state.pending_card_choice = None
+        self.state.card_choice_seq_num = None
         stack_item_id = pdu.get("stack_item_id")
         self.state.stack = [
             item for item in self.state.stack
@@ -192,14 +202,17 @@ class PduDispatcher:
             "seq_num": self._priority_seq_num()
         })
 
-    def send_cast_spell(self, card_id, targets=None, mana_payment=None):
-        self.connection.send({
+    def send_cast_spell(self, card_id, targets=None, mana_payment=None, mode=None):
+        pdu = {
             "type": "CAST_SPELL",
             "seq_num": self._priority_seq_num(),
             "card_id": card_id,
             "targets": list(targets or []),
             "mana_payment": dict(mana_payment or {})
-        })
+        }
+        if mode is not None:
+            pdu["mode"] = mode
+        self.connection.send(pdu)
 
     def send_activate_ability(
         self,
@@ -283,6 +296,24 @@ class PduDispatcher:
             "type": "CONCEDE",
             "seq_num": self.state.last_received_pdu_seq_num,
             "player_id": self.state.pid
+        })
+
+    def send_card_choice_response(self, **response):
+        pdu = {
+            "type": "CARD_CHOICE_RESPONSE",
+            "seq_num": self.state.card_choice_seq_num,
+            "player_id": self.state.pid,
+            **response,
+        }
+        self.connection.send(pdu)
+
+    def send_suspend_card(self, card_id, mana_payment):
+        self.connection.send({
+            "type": "SUSPEND_CARD",
+            "seq_num": self._priority_seq_num(),
+            "player_id": self.state.pid,
+            "card_id": card_id,
+            "mana_payment": dict(mana_payment or {}),
         })
 
     def _priority_seq_num(self):
