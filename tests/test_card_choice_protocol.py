@@ -192,6 +192,31 @@ class CardChoiceFixture(unittest.TestCase):
         self.assertIsNone(self.alice.pending_card_choice)
         self.assertEqual(self.alice.hand, [])
 
+    def test_mana_leak_target_controller_decides_and_exact_payment_is_authoritative(self):
+        target = {
+            "stack_item_id": 40, "item_type": "SPELL", "source": "shock_001",
+            "controller": "bob", "targets": ["alice"],
+        }
+        self.game.stack.append(target)
+        self.bob.battlefield = [
+            {"id": "island_001", "tapped": False},
+            {"id": "island_002", "tapped": False},
+            {"id": "island_003", "tapped": False},
+        ]
+        self.resolve_item("mana_leak_001", targets=[40])
+        self.assertEqual(self.bob.pending_card_choice["choice_type"], "PAY_MANA")
+        self.assertFalse(self.answer(self.bob, pay=True, mana_payment={"Generic": 2}))
+        self.assertTrue(self.answer(self.bob, pay=True, mana_payment={"Generic": 3}))
+        self.assertIn(target, self.game.stack)
+        self.assertTrue(all(land["tapped"] for land in self.bob.battlefield))
+
+        self.game.priority_holder = "alice"
+        self.game.stack = [target]
+        self.resolve_item("mana_leak_002", targets=[40])
+        self.assertTrue(self.answer(self.bob, pay=False))
+        self.assertNotIn(target, self.game.stack)
+        self.assertIn("shock_001", self.bob.graveyard)
+
 
 if __name__ == "__main__":
     unittest.main()

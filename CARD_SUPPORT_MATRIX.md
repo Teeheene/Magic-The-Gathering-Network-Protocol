@@ -26,7 +26,7 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Unsummon | unsummon | Instant | Bounce creature | COMPLETE | `test_unsummon_e2e` | — |
 | Ponder | ponder | Sorcery | Top-three reorder/shuffle/draw | COMPLETE | `test_ponder_orders_privately_then_optionally_shuffles_and_draws`, `test_ponder_short_and_empty_libraries` | Chained private ORDER_CARDS and YES_NO choices |
 | Negate | negate | Instant | Counter noncreature spell | COMPLETE | `test_cancel_and_negate_counter_through_cast_stack_path` | Resolution restriction uses the same authoritative validator |
-| Mana Leak | mana_leak | Instant | Counter unless controller pays 3 | PARTIAL | — | Existing server auto-decision is insufficient; MTGNP has no affected-player payment response |
+| Mana Leak | mana_leak | Instant | Counter unless controller pays 3 | COMPLETE | `test_mana_leak_target_controller_decides_and_exact_payment_is_authoritative` | Target spell controller receives authoritative PAY_MANA choice |
 | Merfolk Looter | merfolk_looter | Creature | Tap: draw then discard | COMPLETE | `test_merfolk_looter_draws_then_privately_selects_discard` | Private discard uses CARD_CHOICE_REQUEST |
 | Prodigal Sorcerer | prodigal_sorcerer | Creature | Tap: 1 damage | COMPLETE | `test_prodigal_sorcerer_activated_ability_resolution` | — |
 | Air Elemental | air_elemental | Creature | Flying | COMPLETE | `test_flying_reach_and_protection_legality` | — |
@@ -65,8 +65,8 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 
 ## Current totals
 
-- COMPLETE: 46
-- PARTIAL: 3
+- COMPLETE: 47
+- PARTIAL: 2
 - MISSING: 1
 - NO SPECIAL ENGINE WORK REQUIRED: 8
 - Total: 58

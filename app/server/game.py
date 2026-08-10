@@ -1113,6 +1113,47 @@ class Game:
                 )
                 return False
 
+            if base_id == "mana_leak":
+                target_item = next(
+                    (candidate for candidate in self.stack if candidate.get("stack_item_id") == targets[0]),
+                    None,
+                )
+                if target_item is None:
+                    if ctrl_client:
+                        ctrl_client.graveyard.append(source_id)
+                    self.pdu_dispatcher.broadcast_stack_resolve(item["stack_item_id"], "FIZZLE", [])
+                    return self.post_event()
+                target_controller = self.client_for_player(target_item.get("controller"))
+                def validate_mana_leak(pdu):
+                    pay = pdu.get("pay")
+                    if not isinstance(pay, bool):
+                        return None
+                    if not pay:
+                        return (False, None)
+                    payment = self.normalize_mana_payment(pdu.get("mana_payment"))
+                    if payment != {"X": 3}:
+                        return None
+                    plan = self.plan_mana_payment(target_controller, payment)
+                    return (True, plan) if plan is not None else None
+                def finish_mana_leak(decision):
+                    pay, plan = decision
+                    changes = []
+                    if pay:
+                        self.commit_mana_payment(target_controller, plan)
+                        changes.append({"type": "PAY_MANA", "player": target_controller.pid, "amount": 3})
+                    else:
+                        self.stack.remove(target_item)
+                        if target_item.get("item_type") == "SPELL":
+                            target_controller.graveyard.append(target_item.get("source"))
+                        changes.append({"type": "COUNTER_SPELL", "stack_item_id": targets[0]})
+                    return finish_choice_spell(changes)
+                self.pdu_dispatcher.send_card_choice_request(
+                    target_controller, source_id, "PAY_MANA", "Pay 3 mana to prevent the spell from being countered?",
+                    0, 1, [], required_mana={"Generic": 3},
+                    validator=validate_mana_leak, continuation=finish_mana_leak,
+                )
+                return False
+
             if base_id == "mind_rot":
                 target_client = self.client_for_player(targets[0])
                 options = list(target_client.hand)
