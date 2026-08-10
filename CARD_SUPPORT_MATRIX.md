@@ -43,7 +43,7 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Wall of Stone | wall_of_stone | Creature | Defender | COMPLETE | `test_defender_and_vigilance_combat` | — |
 | Swords to Plowshares | swords_to_plowshares | Instant | Exile creature; controller gains power | COMPLETE | `test_swords_exiles_and_gains_effective_power` | — |
 | Path to Exile | path_to_exile | Instant | Exile; optional basic-land search | COMPLETE | `test_path_exiles_then_affected_controller_may_search` | Chained private YES_NO and SELECT_CARDS choices |
-| Healing Salve | healing_salve | Instant | Modal gain/prevent damage | MISSING | — | MTGNP CAST_SPELL has no mode/prevention-target field and no modal-choice response |
+| Healing Salve | healing_salve | Instant | Modal gain/prevent damage | COMPLETE | `test_healing_salve_modes_and_prevention_consumption_cleanup`, `test_healing_salve_cast_requires_known_mode_and_mode_legal_target` | CAST_SPELL mode is mandatory and enum-validated for this card |
 | Pacifism | pacifism | Enchantment | Aura; cannot attack/block | COMPLETE | `test_pacifism_attaches_and_prevents_attacking`, `test_pacifism_prevents_blocking` | Orphaned Aura cleanup is enforced by SBA |
 | White Knight | white_knight | Creature | First strike; protection black | COMPLETE | `test_flying_reach_and_protection_legality`, `test_first_and_double_strike_damage_windows` | — |
 | Serra Angel | serra_angel | Creature | Flying; Vigilance | COMPLETE | `test_flying_reach_and_protection_legality`, `test_defender_and_vigilance_combat` | — |
@@ -65,9 +65,9 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 
 ## Current totals
 
-- COMPLETE: 47
+- COMPLETE: 48
 - PARTIAL: 2
-- MISSING: 1
+- MISSING: 0
 - NO SPECIAL ENGINE WORK REQUIRED: 8
 - Total: 58
 

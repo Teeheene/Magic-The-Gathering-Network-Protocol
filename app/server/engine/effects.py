@@ -28,19 +28,19 @@ class CardEffects:
         }
         if base_id in burn_amounts:
             amount = burn_amounts[base_id]
-            if target_id == opponent_client.pid or target_id == controller_client.pid:
-                target_c = opponent_client if target_id == opponent_client.pid else controller_client
-                target_c.life_total -= amount
-                changes.append({"type": "DAMAGE_PLAYER", "target": target_id, "amount": amount})
-            else:
-                owner, perm = game.find_permanent(target_id) if hasattr(game, "find_permanent") else (None, None)
-                if perm and isinstance(perm, dict):
-                    perm["damage"] = perm.get("damage", 0) + amount
-                    changes.append({"type": "DAMAGE_CREATURE", "target": target_id, "amount": amount})
-
             if base_id == "skullcrack":
                 game.cant_gain_life_this_turn = True
                 game.cant_prevent_damage_this_turn = True
+            if target_id == opponent_client.pid or target_id == controller_client.pid:
+                target_c = opponent_client if target_id == opponent_client.pid else controller_client
+                dealt = game.deal_damage_to_player(target_c, amount)
+                changes.append({"type": "DAMAGE_PLAYER", "target": target_id, "amount": dealt})
+            else:
+                owner, perm = game.find_permanent(target_id) if hasattr(game, "find_permanent") else (None, None)
+                if perm and isinstance(perm, dict):
+                    dealt = game.deal_damage_to_permanent(perm, amount)
+                    changes.append({"type": "DAMAGE_CREATURE", "target": target_id, "amount": dealt})
+
             if base_id == "incinerate" and target_id and not (target_id == opponent_client.pid or target_id == controller_client.pid):
                 owner, perm = game.find_permanent(target_id) if hasattr(game, "find_permanent") else (None, None)
                 if perm:
@@ -171,13 +171,13 @@ class CardEffects:
         if base_id in {"prodigal_sorcerer", "rod_of_ruin"}:
             if target_id == opponent_client.pid or target_id == controller_client.pid:
                 target_c = opponent_client if target_id == opponent_client.pid else controller_client
-                target_c.life_total -= 1
-                changes.append({"type": "DAMAGE_PLAYER", "target": target_id, "amount": 1})
+                dealt = game.deal_damage_to_player(target_c, 1)
+                changes.append({"type": "DAMAGE_PLAYER", "target": target_id, "amount": dealt})
             else:
                 owner, perm = game.find_permanent(target_id) if hasattr(game, "find_permanent") else (None, None)
                 if perm and isinstance(perm, dict):
-                    perm["damage"] = perm.get("damage", 0) + 1
-                    changes.append({"type": "DAMAGE_CREATURE", "target": target_id, "amount": 1})
+                    dealt = game.deal_damage_to_permanent(perm, 1)
+                    changes.append({"type": "DAMAGE_CREATURE", "target": target_id, "amount": dealt})
             return "RESOLVED", changes
 
         if base_id == "royal_assassin":

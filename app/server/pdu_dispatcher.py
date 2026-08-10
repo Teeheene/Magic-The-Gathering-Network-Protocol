@@ -357,6 +357,7 @@ class PduDispatcher:
         card_id = pdu.get("card_id")
         targets = pdu.get("targets")
         mana_payment = pdu.get("mana_payment")
+        mode = pdu.get("mode")
 
         if (
             not isinstance(card_id, str)
@@ -373,6 +374,12 @@ class PduDispatcher:
             return self.send_error(client, f"Unknown card_id: {card_id}", ERR_ILLEGAL_ACTION, pdu)
 
         card_type = card_data.get("card_type", "").casefold()
+        base_id = self.server.base_card_id(card_id)
+        if base_id == "healing_salve":
+            if mode not in {"GAIN_LIFE", "PREVENT_DAMAGE"}:
+                return self.send_error(client, "Healing Salve requires a valid mode.", ERR_ILLEGAL_ACTION, pdu)
+        elif mode is not None:
+            return self.send_error(client, "This spell does not accept a mode.", ERR_ILLEGAL_ACTION, pdu)
 
         # Reject Land via CAST_SPELL
         if "land" in card_type:
@@ -393,13 +400,12 @@ class PduDispatcher:
         if not self._validate_priority_action(client, pdu):
             return False
 
-        if not self.server.targets_are_legal(card_id, targets, controller_id=client.pid):
+        if not self.server.targets_are_legal(card_id, targets, controller_id=client.pid, mode=mode):
             return self.send_error(client, "The spell's targets are missing or illegal.", ERR_ILLEGAL_TARGET, pdu)
 
 
         expected_payment = self.server.card_mana_cost(card_id)
         declared_payment = self.server.normalize_mana_payment(mana_payment)
-        base_id = self.server.base_card_id(card_id)
         kicker_payment = {
             "goblin_bushwhacker": {"R": 2, "X": 1},
             "vines_of_vastwood": {"G": 2},
@@ -436,6 +442,7 @@ class PduDispatcher:
             "targets": list(targets),
             "mana_payment": dict(mana_payment),
             "kicked": kicker_payment is not None and declared_payment == kicker_payment,
+            "mode": mode,
         }
         self.server.commit_mana_payment(client, mana_payment_plan)
         client.hand.remove(card_id)

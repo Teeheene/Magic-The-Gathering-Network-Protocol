@@ -52,6 +52,13 @@ class CardChoiceFixture(unittest.TestCase):
         })
         return self.game.resolve_top_stack_item()
 
+    def resolve_mode_item(self, source, mode, targets):
+        self.game.stack.append({
+            "stack_item_id": 98, "item_type": "SPELL", "source": source,
+            "controller": "alice", "targets": list(targets), "mode": mode,
+        })
+        return self.game.resolve_top_stack_item()
+
     def answer(self, client, **fields):
         return self.game.pdu_dispatcher.handle(client, {
             "type": "CARD_CHOICE_RESPONSE",
@@ -216,6 +223,36 @@ class CardChoiceFixture(unittest.TestCase):
         self.assertTrue(self.answer(self.bob, pay=False))
         self.assertNotIn(target, self.game.stack)
         self.assertIn("shock_001", self.bob.graveyard)
+
+    def test_healing_salve_modes_and_prevention_consumption_cleanup(self):
+        self.resolve_mode_item("healing_salve_001", "GAIN_LIFE", ["bob"])
+        self.assertEqual(self.bob.life_total, 23)
+
+        creature = {"id": "grizzly_bears_001", "power": 2, "toughness": 2, "damage": 0, "keywords": []}
+        self.bob.battlefield = [creature]
+        self.resolve_mode_item("healing_salve_002", "PREVENT_DAMAGE", [creature["id"]])
+        self.assertEqual(creature["damage_prevention_shield"], 3)
+        self.resolve_item("flame_slash_001", targets=[creature["id"]])
+        self.assertEqual(creature["damage"], 1)
+        self.assertEqual(creature["damage_prevention_shield"], 0)
+        self.game.finish_cleanup()
+        self.assertNotIn("damage_prevention_shield", creature)
+
+    def test_healing_salve_cast_requires_known_mode_and_mode_legal_target(self):
+        self.alice.hand = ["healing_salve_003"]
+        self.alice.battlefield = [{"id": "plains_001", "tapped": False}]
+        base = {
+            "type": "CAST_SPELL", "seq_num": 10, "card_id": "healing_salve_003",
+            "targets": ["alice"], "mana_payment": {"W": 1},
+        }
+        self.assertFalse(self.game.pdu_dispatcher.handle_cast_spell(self.alice, dict(base)))
+        self.game.priority_holder = "alice"
+        bad = dict(base, mode="UNKNOWN")
+        self.assertFalse(self.game.pdu_dispatcher.handle_cast_spell(self.alice, bad))
+        self.game.priority_holder = "alice"
+        good = dict(base, mode="GAIN_LIFE")
+        self.assertTrue(self.game.pdu_dispatcher.handle_cast_spell(self.alice, good))
+        self.assertEqual(self.game.stack[-1]["mode"], "GAIN_LIFE")
 
 
 if __name__ == "__main__":

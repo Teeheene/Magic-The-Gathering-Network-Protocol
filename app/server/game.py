@@ -138,7 +138,7 @@ class Game:
             for item in self.stack
         )
 
-    def targets_are_legal(self, card_id, targets, is_ability=False, controller_id=None):
+    def targets_are_legal(self, card_id, targets, is_ability=False, controller_id=None, mode=None):
         card_data = self.card_data(card_id) or {}
         source_color = {
             "W": "white", "U": "blue", "B": "black", "R": "red", "G": "green",
@@ -163,6 +163,12 @@ class Game:
             return False
 
         target_id = targets[0]
+        if base_id == "healing_salve":
+            if mode == "GAIN_LIFE":
+                return self.client_for_player(target_id) is not None
+            if mode == "PREVENT_DAMAGE":
+                return self.target_exists(target_id)
+            return False
         if base_id == "raise_dead":
             controller = self.client_for_player(controller_id)
             if controller is None or target_id not in controller.graveyard:
@@ -425,6 +431,22 @@ class Game:
         client.life_total += amount
         return amount
 
+    def deal_damage_to_player(self, client, amount):
+        shield = getattr(client, "damage_prevention_shield", 0)
+        prevented = 0 if self.cant_prevent_damage_this_turn else min(shield, amount)
+        client.damage_prevention_shield = shield - prevented
+        dealt = amount - prevented
+        client.life_total -= dealt
+        return dealt
+
+    def deal_damage_to_permanent(self, permanent, amount):
+        shield = permanent.get("damage_prevention_shield", 0)
+        prevented = 0 if self.cant_prevent_damage_this_turn else min(shield, amount)
+        permanent["damage_prevention_shield"] = shield - prevented
+        dealt = amount - prevented
+        permanent["damage"] = permanent.get("damage", 0) + dealt
+        return dealt
+
     @staticmethod
     def tap_permanents(permanents):
         for permanent in permanents:
@@ -433,13 +455,13 @@ class Game:
     def deal_damage(self, target_id, amount):
         target_client = self.client_for_player(target_id)
         if target_client is not None:
-            target_client.life_total -= amount
-            return {"type": "DAMAGE", "target": target_id, "amount": amount}
+            dealt = self.deal_damage_to_player(target_client, amount)
+            return {"type": "DAMAGE", "target": target_id, "amount": dealt}
 
         _, permanent = self.find_permanent(target_id)
         if isinstance(permanent, dict) and permanent.get("toughness") is not None:
-            permanent["damage"] = permanent.get("damage", 0) + amount
-            return {"type": "DAMAGE", "target": target_id, "amount": amount}
+            dealt = self.deal_damage_to_permanent(permanent, amount)
+            return {"type": "DAMAGE", "target": target_id, "amount": dealt}
         return None
 
     def destroy_permanent(self, target_id, allow_regeneration=True):
@@ -1065,7 +1087,7 @@ class Game:
         elif item_type == "SPELL":
             base_id = self.base_card_id(source_id)
             if targets and not self.targets_are_legal(
-                source_id, targets, controller_id=controller
+                source_id, targets, controller_id=controller, mode=item.get("mode")
             ):
                 # Spell FIZZLES
                 if ctrl_client:
@@ -1172,6 +1194,24 @@ class Game:
                     continuation=finish_mind_rot,
                 )
                 return False
+
+            if base_id == "healing_salve":
+                mode = item.get("mode")
+                target_id = targets[0]
+                changes = []
+                if mode == "GAIN_LIFE":
+                    target_client = self.client_for_player(target_id)
+                    gained = self.gain_life(target_client, 3)
+                    changes.append({"type": "LIFE_GAIN", "target": target_id, "amount": gained})
+                else:
+                    target_client = self.client_for_player(target_id)
+                    if target_client is not None:
+                        target_client.damage_prevention_shield = getattr(target_client, "damage_prevention_shield", 0) + 3
+                    else:
+                        _, target_permanent = self.find_permanent(target_id)
+                        target_permanent["damage_prevention_shield"] = target_permanent.get("damage_prevention_shield", 0) + 3
+                    changes.append({"type": "DAMAGE_PREVENTION_SHIELD", "target": target_id, "amount": 3})
+                return finish_choice_spell(changes)
 
             if base_id == "rampant_growth":
                 options = self.basic_land_ids(ctrl_client.library, self.card_data)
@@ -1312,11 +1352,11 @@ class Game:
             if not assigned_blockers and attacker_eligible and attacker_power > 0:
                 target_client = self.client_for_player(attacker["target"])
                 if target_client is not None:
-                    target_client.life_total -= attacker_power
+                    dealt = self.deal_damage_to_player(target_client, attacker_power)
                     damage_events.append({
                         "source": attacker_id,
                         "target": target_client.pid,
-                        "amount": attacker_power
+                        "amount": dealt
                     })
                 continue
 
@@ -1343,13 +1383,11 @@ class Game:
                 if assigned_damage > 0:
                     remaining_damage -= assigned_damage
                     if not self.is_protected_from(blocker_permanent, attacker_permanent):
-                        blocker_permanent["damage"] = (
-                            blocker_permanent.get("damage", 0) + assigned_damage
-                        )
+                        dealt = self.deal_damage_to_permanent(blocker_permanent, assigned_damage)
                         damage_events.append({
                             "source": attacker_id,
                             "target": blocker_id,
-                            "amount": assigned_damage
+                            "amount": dealt
                         })
 
             for blocker in assigned_blockers:
@@ -1366,14 +1404,12 @@ class Game:
                     )
                     if blocker_eligible and not self.is_protected_from(attacker_permanent, blocker_permanent):
                         b_power, _ = self.get_effective_pt(blocker_permanent)
-                        attacker_permanent["damage"] = (
-                            attacker_permanent.get("damage", 0) + b_power
-                        )
+                        dealt = self.deal_damage_to_permanent(attacker_permanent, b_power)
                         if b_power > 0:
                             damage_events.append({
                                 "source": blocker_id,
                                 "target": attacker_id,
-                                "amount": b_power
+                                "amount": dealt
                             })
 
         sba_result = StateBasedActions.check_and_apply(self)
@@ -1424,6 +1460,7 @@ class Game:
         self.cant_prevent_damage_this_turn = False
         for client in self.clients:
             client.mana_pool = {}
+            client.damage_prevention_shield = 0
             for permanent in client.battlefield:
                 if isinstance(permanent, dict):
                     permanent["damage"] = 0
@@ -1434,6 +1471,7 @@ class Game:
                     permanent.pop("opponent_targeting_blocked_until_eot", None)
                     permanent.pop("temporary_haste", None)
                     permanent.pop("temporary_protection", None)
+                    permanent.pop("damage_prevention_shield", None)
 
         active_client = self.client_for_player(self.active_player)
         next_client = self.other_client(active_client)
