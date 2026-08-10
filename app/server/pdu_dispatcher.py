@@ -360,7 +360,7 @@ class PduDispatcher:
         if not self._validate_priority_action(client, pdu):
             return False
 
-        if not self.server.targets_are_legal(card_id, targets):
+        if not self.server.targets_are_legal(card_id, targets, controller_id=client.pid):
             return self.send_error(client, "The spell's targets are missing or illegal.", ERR_ILLEGAL_TARGET, pdu)
 
 
@@ -374,11 +374,11 @@ class PduDispatcher:
                 pdu
             )
 
-        mana_sources = self.server.select_mana_sources(
+        mana_payment_plan = self.server.plan_mana_payment(
             client,
             declared_payment,
         )
-        if mana_sources is None:
+        if mana_payment_plan is None:
             return self.send_error(
                 client,
                 "You do not control enough untapped mana sources.",
@@ -395,7 +395,7 @@ class PduDispatcher:
             "targets": list(targets),
             "mana_payment": dict(mana_payment)
         }
-        self.server.tap_permanents(mana_sources)
+        self.server.commit_mana_payment(client, mana_payment_plan)
         client.hand.remove(card_id)
         self.server.stack.append(stack_item)
         self.server.consecutive_priority_passes = 0
@@ -502,12 +502,12 @@ class PduDispatcher:
                     pdu
                 )
 
-        mana_sources = self.server.select_mana_sources(
+        mana_payment_plan = self.server.plan_mana_payment(
             client,
             declared_mana,
             source_permanent if declared_tap else None,
         )
-        if mana_sources is None:
+        if mana_payment_plan is None:
             return self.send_error(
                 client,
                 "You do not control enough untapped mana sources.",
@@ -515,7 +515,7 @@ class PduDispatcher:
                 pdu
             )
 
-        self.server.tap_permanents(mana_sources)
+        self.server.commit_mana_payment(client, mana_payment_plan)
         if declared_tap and isinstance(source_permanent, dict):
             source_permanent["tapped"] = True
 

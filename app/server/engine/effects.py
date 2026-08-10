@@ -100,6 +100,14 @@ class CardEffects:
             changes.append({"type": "ADD_MANA", "player": controller_client.pid, "mana": {"B": 3}})
             return "RESOLVED", changes
 
+        if base_id == "raise_dead":
+            if target_id in controller_client.graveyard:
+                controller_client.graveyard.remove(target_id)
+                controller_client.hand.append(target_id)
+                changes.append({"type": "RETURN_TO_HAND", "target": target_id})
+                return "RESOLVED", changes
+            return "FIZZLE", []
+
         # Ponder
         if base_id == "ponder":
             if controller_client.library:

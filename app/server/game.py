@@ -134,7 +134,7 @@ class Game:
             for item in self.stack
         )
 
-    def targets_are_legal(self, card_id, targets, is_ability=False):
+    def targets_are_legal(self, card_id, targets, is_ability=False, controller_id=None):
         card_data = self.card_data(card_id) or {}
         card_type = card_data.get("card_type", "").casefold()
         text = card_data.get("text", "").casefold()
@@ -151,6 +151,13 @@ class Game:
 
         target_id = targets[0]
         base_id = self.base_card_id(card_id)
+
+        if base_id == "raise_dead":
+            controller = self.client_for_player(controller_id)
+            if controller is None or target_id not in controller.graveyard:
+                return False
+            target_data = self.card_data(target_id) or {}
+            return "creature" in target_data.get("card_type", "").casefold()
 
         # Counterspells: target must be on stack
         if base_id in {"counterspell", "cancel", "mana_leak", "negate"}:
@@ -172,7 +179,9 @@ class Game:
             return self.client_for_player(target_id) is not None
 
         # Creature-only targets
-        if base_id in {"flame_slash", "unsummon", "royal_assassin"} or "target creature" in text:
+        if base_id in {
+            "flame_slash", "unsummon", "royal_assassin", "terror", "doom_blade"
+        } or "target creature" in text:
             owner, permanent = self.find_permanent(target_id)
             if permanent is None or not isinstance(permanent, dict):
                 return False
@@ -332,6 +341,52 @@ class Game:
 
         return selected
 
+    def plan_mana_payment(self, client, payment, excluded_permanent=None):
+        required = self.normalize_mana_payment(payment)
+        if required is None:
+            return None
+
+        available_pool = Counter(getattr(client, "mana_pool", {}) or {})
+        spent_pool = Counter()
+        remaining = Counter(required)
+        for color in ("W", "U", "B", "R", "G", "C"):
+            amount = min(available_pool[color], remaining[color])
+            spent_pool[color] += amount
+            available_pool[color] -= amount
+            remaining[color] -= amount
+
+        generic_needed = remaining["X"]
+        for color in ("C", "W", "U", "B", "R", "G"):
+            amount = min(available_pool[color], generic_needed)
+            spent_pool[color] += amount
+            available_pool[color] -= amount
+            generic_needed -= amount
+            if generic_needed == 0:
+                break
+        remaining["X"] = generic_needed
+
+        sources = self.select_mana_sources(client, dict(remaining), excluded_permanent)
+        if sources is None:
+            return None
+        return sources, spent_pool
+
+    @staticmethod
+    def commit_mana_payment(client, payment_plan):
+        sources, spent_pool = payment_plan
+        Game.tap_permanents(sources)
+        mana_pool = getattr(client, "mana_pool", {}) or {}
+        for color, amount in spent_pool.items():
+            mana_pool[color] = mana_pool.get(color, 0) - amount
+            if mana_pool[color] <= 0:
+                mana_pool.pop(color, None)
+        client.mana_pool = mana_pool
+
+    def gain_life(self, client, amount):
+        if client is None or self.cant_gain_life_this_turn:
+            return 0
+        client.life_total += amount
+        return amount
+
     @staticmethod
     def tap_permanents(permanents):
         for permanent in permanents:
@@ -363,7 +418,9 @@ class Game:
         targets = stack_item.get("targets", [])
         target_id = targets[0] if targets else None
 
-        if targets and not self.targets_are_legal(source_id, targets):
+        if targets and not self.targets_are_legal(
+            source_id, targets, controller_id=stack_item.get("controller")
+        ):
             return "FIZZLE", []
 
         damage_amounts = {
@@ -865,7 +922,9 @@ class Game:
             self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), status, changes)
         elif item_type == "SPELL":
             base_id = self.base_card_id(source_id)
-            if targets and not self.targets_are_legal(source_id, targets):
+            if targets and not self.targets_are_legal(
+                source_id, targets, controller_id=controller
+            ):
                 # Spell FIZZLES
                 if ctrl_client:
                     ctrl_client.graveyard.append(source_id)

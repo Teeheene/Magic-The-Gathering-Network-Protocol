@@ -223,7 +223,7 @@ class TriggerManager:
             opp_client = game.other_client(ctrl_client) if hasattr(game, "other_client") else None
             if opp_client:
                 opp_client.life_total -= devotion
-            ctrl_client.life_total += devotion
+            game.gain_life(ctrl_client, devotion)
 
     def _resolve_gravedigger(self, controller: str, item: Dict[str, Any], game: Any):
         target = item.get("target")
