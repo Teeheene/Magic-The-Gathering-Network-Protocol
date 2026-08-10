@@ -50,6 +50,7 @@ class Game:
         self.cant_gain_life_this_turn = False
         self.cant_prevent_damage_this_turn = False
         self.suspended_cards = []
+        self.pending_event_continuation = None
         for client in getattr(self, "clients", []):
             client.ready_in_lobby = False
 
@@ -73,6 +74,7 @@ class Game:
         self.blockers_declared = False
         self.next_stack_item_id = 1
         self.suspended_cards = []
+        self.pending_event_continuation = None
         self.game_over = False
 
         rng = getattr(self, "rng", random)
@@ -89,6 +91,8 @@ class Game:
             client.exile = []
             client.mulligan_taken = 0
             client.mulligan_kept = False
+            client.mana_pool = {}
+            client.damage_prevention_shield = 0
             client.pending_card_choice = None
             client.active_card_choice_seq_num = None
 
@@ -165,12 +169,50 @@ class Game:
             return False
 
         target_id = targets[0]
+        any_target = {
+            "lightning_bolt", "shock", "searing_spear", "skullcrack", "rift_bolt",
+            "incinerate", "prodigal_sorcerer", "rod_of_ruin",
+        }
         if base_id == "healing_salve":
             if mode == "GAIN_LIFE":
                 return self.client_for_player(target_id) is not None
             if mode == "PREVENT_DAMAGE":
-                return self.target_exists(target_id)
+                if self.client_for_player(target_id) is not None:
+                    return True
+                owner, permanent = self.find_permanent(target_id)
+                if not isinstance(permanent, dict):
+                    return False
+                target_data = self.card_data(permanent.get("id", "")) or {}
+                if "creature" not in target_data.get("card_type", "").casefold():
+                    return False
+                keywords = self.permanent_keywords(permanent)
+                if "hexproof" in keywords and owner.pid != controller_id:
+                    return False
+                if "protection from white" in keywords and owner.pid != controller_id:
+                    return False
+                return not (
+                    owner.pid != controller_id
+                    and permanent.get("opponent_targeting_blocked_until_eot")
+                )
             return False
+        if base_id in {"counterspell", "cancel", "mana_leak", "negate"}:
+            stack_item = next((item for item in self.stack if item.get("stack_item_id") == target_id), None)
+            if stack_item is None or stack_item.get("item_type") != "SPELL":
+                return False
+            if base_id == "negate":
+                target_card_data = self.card_data(stack_item.get("source", "")) or {}
+                if "creature" in target_card_data.get("card_type", "").casefold():
+                    return False
+            return True
+        if base_id in any_target:
+            if self.client_for_player(target_id) is not None:
+                return True
+            owner, permanent = self.find_permanent(target_id)
+            if not isinstance(permanent, dict):
+                return False
+            target_data = self.card_data(permanent.get("id", "")) or {}
+            if "creature" not in target_data.get("card_type", "").casefold():
+                return False
         if base_id == "raise_dead":
             controller = self.client_for_player(controller_id)
             if controller is None or target_id not in controller.graveyard:
@@ -192,6 +234,7 @@ class Game:
                 and target_owner.pid != controller_id
             ):
                 return False
+
             if base_id == "mother_of_runes" and (
                 target_owner is None or target_owner.pid != controller_id
             ):
@@ -205,19 +248,7 @@ class Game:
             ):
                 return False
 
-        # Counterspells: target must be on stack
-        if base_id in {"counterspell", "cancel", "mana_leak", "negate"}:
-            stack_item = next(
-                (item for item in self.stack if item.get("stack_item_id") == target_id),
-                None,
-            )
-            if stack_item is None:
-                return False
-            if base_id == "negate":
-                target_source_id = stack_item.get("source", "")
-                target_card_data = self.card_data(target_source_id) or {}
-                if "creature" in target_card_data.get("card_type", "").casefold():
-                    return False
+        if base_id in any_target:
             return True
 
         # Player-only targets
@@ -226,7 +257,7 @@ class Game:
 
         # Creature-only targets
         if base_id in {
-            "flame_slash", "unsummon", "royal_assassin", "terror", "doom_blade"
+            "flame_slash", "unsummon", "royal_assassin", "terror", "doom_blade", "pacifism"
         } or "target creature" in text:
             owner, permanent = self.find_permanent(target_id)
             if permanent is None or not isinstance(permanent, dict):
@@ -254,7 +285,7 @@ class Game:
             perm_type = perm_data.get("card_type", "").casefold()
             return "artifact" in perm_type or "enchantment" in perm_type
 
-        return self.target_exists(target_id)
+        return False
 
 
 
@@ -697,44 +728,67 @@ class Game:
             return False
         return self.broadcast_game_state()
 
+    def _process_suspend_due_queue(self, queue):
+        if not queue:
+            self.priority_holder = self.active_player
+            self.consecutive_priority_passes = 0
+            if not self.broadcast_game_state():
+                return False
+            return self.grant_priority(self.active_player)
+        entry = queue[0]
+        owner = self.client_for_player(entry["owner"])
+        options = [client.pid for client in self.clients]
+        options.extend(
+            permanent.get("id")
+            for client in self.clients for permanent in client.battlefield
+            if isinstance(permanent, dict)
+            and "creature" in (self.card_data(permanent.get("id", "")) or {}).get("card_type", "").casefold()
+        )
+        options = [
+            target_id for target_id in options
+            if self.targets_are_legal(entry["card_id"], [target_id], controller_id=owner.pid)
+        ]
+
+        def validate_target(pdu):
+            selected = pdu.get("selected_targets")
+            if not isinstance(selected, list) or len(selected) != 1:
+                return None
+            return list(selected) if self.targets_are_legal(entry["card_id"], selected, controller_id=owner.pid) else None
+
+        def cast_suspended(selected):
+            if entry in self.suspended_cards:
+                self.suspended_cards.remove(entry)
+            if entry["card_id"] in owner.exile:
+                owner.exile.remove(entry["card_id"])
+            stack_item = {
+                "stack_item_id": self.pdu_dispatcher._next_stack_item_id(),
+                "item_type": "SPELL", "source": entry["card_id"],
+                "controller": owner.pid, "targets": selected,
+                "mana_payment": {}, "suspended": True,
+            }
+            self.stack.append(stack_item)
+            self.pdu_dispatcher.broadcast_stack_push(stack_item)
+            return self._process_suspend_due_queue(queue[1:])
+
+        if not options:
+            return cast_suspended([])
+        self.pdu_dispatcher.send_card_choice_request(
+            owner, entry["card_id"], "SELECT_TARGETS", "Choose a target for suspended Rift Bolt.",
+            1, 1, options, validator=validate_target, continuation=cast_suspended,
+        )
+        return False
+
     def upkeep(self):
         if not self.transition_phase("UPKEEP"):
             return False
-        due = [entry for entry in self.suspended_cards if entry["owner"] == self.active_player]
-        for entry in due:
-            entry["time_counters"] -= 1
-            if entry["time_counters"] > 0:
-                continue
-            owner = self.client_for_player(entry["owner"])
-            options = [client.pid for client in self.clients]
-            options.extend(
-                permanent.get("id")
-                for client in self.clients for permanent in client.battlefield
-                if isinstance(permanent, dict) and "creature" in (self.card_data(permanent.get("id", "")) or {}).get("card_type", "").casefold()
-            )
-            def validate_target(pdu, legal=list(options)):
-                selected = pdu.get("selected_targets")
-                return list(selected) if isinstance(selected, list) and len(selected) == 1 and selected[0] in legal else None
-            def cast_suspended(selected, suspended=entry, suspended_owner=owner):
-                self.suspended_cards.remove(suspended)
-                suspended_owner.exile.remove(suspended["card_id"])
-                stack_item = {
-                    "stack_item_id": self.pdu_dispatcher._next_stack_item_id(),
-                    "item_type": "SPELL", "source": suspended["card_id"],
-                    "controller": suspended_owner.pid, "targets": selected,
-                    "mana_payment": {}, "suspended": True,
-                }
-                self.stack.append(stack_item)
-                self.pdu_dispatcher.broadcast_stack_push(stack_item)
-                self.priority_holder = self.active_player
-                events = [GameEvent("spell_cast", {"card_id": suspended["card_id"], "controller": suspended_owner.pid, "targets": selected})]
-                events.append(GameEvent("became_target", {"target_id": selected[0], "source": suspended["card_id"], "controller": suspended_owner.pid}))
-                return self.post_event(events)
-            self.pdu_dispatcher.send_card_choice_request(
-                owner, entry["card_id"], "SELECT_TARGETS", "Choose a target for suspended Rift Bolt.",
-                1, 1, options, validator=validate_target, continuation=cast_suspended,
-            )
-            return False
+        due = []
+        for entry in self.suspended_cards:
+            if entry["owner"] == self.active_player:
+                entry["time_counters"] -= 1
+                if entry["time_counters"] <= 0:
+                    due.append(entry)
+        if due:
+            return self._process_suspend_due_queue(due)
         self.priority_holder = self.active_player
         self.consecutive_priority_passes = 0
         if not self.broadcast_game_state():

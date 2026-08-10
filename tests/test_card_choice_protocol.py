@@ -352,6 +352,23 @@ class CardChoiceFixture(unittest.TestCase):
         self.assertEqual(self.bob.life_total, 17)
         self.assertIn("rift_bolt_001", self.alice.graveyard)
 
+    def test_multiple_suspended_rift_bolts_queue_before_priority(self):
+        self.alice.exile = ["rift_bolt_010", "rift_bolt_011"]
+        self.game.suspended_cards = [
+            {"card_id": "rift_bolt_010", "owner": "alice", "time_counters": 1},
+            {"card_id": "rift_bolt_011", "owner": "alice", "time_counters": 1},
+        ]
+        blocked = {"id": "troll_ascetic_001", "keywords": ["hexproof"]}
+        self.bob.battlefield = [blocked]
+        self.game.upkeep()
+        self.assertNotIn(blocked["id"], self.alice.pending_card_choice["options"])
+        self.answer(self.alice, selected_targets=["bob"])
+        self.assertEqual(self.alice.pending_card_choice["source_card_id"], "rift_bolt_011")
+        self.assertIsNone(self.game.priority_holder)
+        self.answer(self.alice, selected_targets=["bob"])
+        self.assertEqual(len(self.game.stack), 2)
+        self.assertEqual(self.game.priority_holder, "alice")
+
     def test_suspend_rejects_wrong_card_cost_and_timing(self):
         self.alice.hand = ["rift_bolt_002", "shock_001"]
         self.alice.battlefield = [{"id": "mountain_001", "tapped": False}]
@@ -394,6 +411,26 @@ class CardChoiceFixture(unittest.TestCase):
         self.answer(self.alice, selected_cards=["reckless_wurm_002"])
         self.answer(self.alice, cast=False)
         self.assertIn("reckless_wurm_002", self.alice.graveyard)
+
+        self.game.phase = "CLEANUP"
+        self.game.active_player = "alice"
+        self.alice.battlefield = [
+            {"id": "mountain_101", "tapped": False},
+            {"id": "mountain_102", "tapped": False},
+            {"id": "mountain_103", "tapped": False},
+        ]
+        self.alice.hand = [f"mountain_{i:03d}" for i in range(1, 8)] + ["reckless_wurm_005"]
+        self.alice.active_cleanup_seq_num = 71
+        self.game.pdu_dispatcher.handle_discard(self.alice, {
+            "type": "DISCARD", "seq_num": 71, "card_ids": ["reckless_wurm_005"],
+        })
+        self.answer(self.alice, cast=True, mana_payment={"R": 1, "Generic": 2})
+        self.assertEqual(self.game.phase, "CLEANUP")
+        self.assertEqual(self.game.priority_holder, "alice")
+        self.assertIn("reckless_wurm_005", [item.get("source") for item in self.game.stack])
+        self.game.register_priority_pass(self.alice)
+        self.game.register_priority_pass(self.bob)
+        self.assertNotIn("reckless_wurm_005", [item.get("source") for item in self.game.stack])
 
     def test_madness_is_available_from_mind_rot_and_cleanup_discard(self):
         self.bob.hand = ["reckless_wurm_003", "island_001"]

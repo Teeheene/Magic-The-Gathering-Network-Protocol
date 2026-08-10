@@ -23,6 +23,7 @@ class ClientState:
         self.battlefield = {}
         self.graveyard = {}
         self.stack = []
+        self.exile = {}
         self.suspended_cards = []
         self.land_played_this_turn = False
         self.attackers = []
@@ -70,6 +71,8 @@ class ClientState:
             self.battlefield = state_dict["battlefield"]
         if "stack" in state_dict:
             self.stack = state_dict["stack"]
+        if "exile" in state_dict:
+            self.exile = state_dict["exile"]
 
     def reset_for_lobby(self):
         self.phase = "LOBBY"
@@ -84,6 +87,7 @@ class ClientState:
         self.battlefield = {}
         self.graveyard = {}
         self.stack = []
+        self.exile = {}
         self.suspended_cards = []
         self.land_played_this_turn = False
         self.attackers = []

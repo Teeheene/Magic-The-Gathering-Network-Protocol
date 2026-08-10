@@ -1022,6 +1022,11 @@ class PduDispatcher:
 
         def finish_discard():
             self._broadcast_game_state()
+            if any(item.get("madness") for item in self.server.stack):
+                self.server.pending_event_continuation = self.server.finish_cleanup
+                self.server.priority_holder = self.server.active_player
+                self.server.consecutive_priority_passes = 0
+                return self.server.grant_priority(self.server.active_player)
             if (
                 self.server.phase == "CLEANUP"
                 and client.pid == self.server.active_player
