@@ -4,7 +4,8 @@ from typing import Any, Dict, List, Optional, Tuple
 class CardEffects:
     @classmethod
     def resolve_card_effect(
-        cls, base_id: str, source_id: str, targets: List[str], controller_client: Any, opponent_client: Any, game: Any
+        cls, base_id: str, source_id: str, targets: List[str], controller_client: Any, opponent_client: Any, game: Any,
+        kicked: bool = False,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Resolve individual card spell effects for the 58 fixed card set.
@@ -39,6 +40,7 @@ class CardEffects:
 
             if base_id == "skullcrack":
                 game.cant_gain_life_this_turn = True
+                game.cant_prevent_damage_this_turn = True
             if base_id == "incinerate" and target_id and not (target_id == opponent_client.pid or target_id == controller_client.pid):
                 owner, perm = game.find_permanent(target_id) if hasattr(game, "find_permanent") else (None, None)
                 if perm:
@@ -91,6 +93,17 @@ class CardEffects:
                 perm["temp_power_buff"] = perm.get("temp_power_buff", 0) + 3
                 perm["temp_toughness_buff"] = perm.get("temp_toughness_buff", 0) + 3
                 changes.append({"type": "TEMP_BUFF", "target": target_id, "power": 3, "toughness": 3})
+                return "RESOLVED", changes
+
+        if base_id == "vines_of_vastwood":
+            owner, perm = game.find_permanent(target_id)
+            if perm:
+                perm["opponent_targeting_blocked_until_eot"] = True
+                changes.append({"type": "TARGETING_RESTRICTION", "target": target_id})
+                if kicked:
+                    perm["temp_power_buff"] = perm.get("temp_power_buff", 0) + 4
+                    perm["temp_toughness_buff"] = perm.get("temp_toughness_buff", 0) + 4
+                    changes.append({"type": "TEMP_BUFF", "target": target_id, "power": 4, "toughness": 4})
                 return "RESOLVED", changes
 
         # Dark Ritual

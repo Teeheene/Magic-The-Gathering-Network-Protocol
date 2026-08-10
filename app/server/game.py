@@ -48,6 +48,7 @@ class Game:
         self.event_bus = EventBus()
         self.trigger_manager = TriggerManager(self, self.card_catalog)
         self.cant_gain_life_this_turn = False
+        self.cant_prevent_damage_this_turn = False
         for client in getattr(self, "clients", []):
             client.ready_in_lobby = False
 
@@ -137,6 +138,9 @@ class Game:
 
     def targets_are_legal(self, card_id, targets, is_ability=False, controller_id=None):
         card_data = self.card_data(card_id) or {}
+        source_color = {
+            "W": "white", "U": "blue", "B": "black", "R": "red", "G": "green",
+        }.get(str(card_data.get("color", "")).upper(), "")
         card_type = card_data.get("card_type", "").casefold()
         text = card_data.get("text", "").casefold()
 
@@ -176,6 +180,14 @@ class Game:
                 "hexproof" in target_keywords
                 and target_owner is not None
                 and target_owner.pid != controller_id
+            ):
+                return False
+            if f"protection from {source_color}" in target_keywords:
+                return False
+            if (
+                target_owner is not None
+                and target_owner.pid != controller_id
+                and target_permanent.get("opponent_targeting_blocked_until_eot")
             ):
                 return False
 
@@ -763,10 +775,22 @@ class Game:
     def permanent_keywords(permanent):
         if not isinstance(permanent, dict):
             return set()
-        return {
+        keywords = {
             str(keyword).casefold().replace("_", " ")
             for keyword in permanent.get("keywords", [])
         }
+        if permanent.get("temporary_haste"):
+            keywords.add("haste")
+        return keywords
+
+    def is_protected_from(self, target_permanent, source_permanent):
+        if not isinstance(target_permanent, dict) or not isinstance(source_permanent, dict):
+            return False
+        source_data = self.card_data(source_permanent.get("id", "")) or {}
+        source_color = {
+            "W": "white", "U": "blue", "B": "black", "R": "red", "G": "green",
+        }.get(str(source_data.get("color", "")).upper(), "")
+        return f"protection from {source_color}" in self.permanent_keywords(target_permanent)
 
     def start_combat_damage(self):
         if self.combat_has_first_strike():
@@ -970,7 +994,10 @@ class Game:
                 self.pdu_dispatcher.broadcast_stack_resolve(item.get("stack_item_id"), "FIZZLE", [])
                 return self.post_event()
 
-            status, changes = CardEffects.resolve_card_effect(base_id, source_id, targets, ctrl_client, opp_client, self)
+            status, changes = CardEffects.resolve_card_effect(
+                base_id, source_id, targets, ctrl_client, opp_client, self,
+                kicked=bool(item.get("kicked")),
+            )
             card_data = self.card_data(source_id) or {}
             card_type = card_data.get("card_type", "").casefold()
 
@@ -990,7 +1017,7 @@ class Game:
                     ctrl_client.battlefield.append(perm)
                     resolution_events = GameEvent(
                         "permanent_entered",
-                        {"creature_id": source_id, "controller": controller},
+                        {"creature_id": source_id, "controller": controller, "kicked": bool(item.get("kicked"))},
                     )
             else:
                 if ctrl_client:
@@ -1076,15 +1103,16 @@ class Game:
                     assigned_damage = min(remaining_damage, lethal)
 
                 if assigned_damage > 0:
-                    blocker_permanent["damage"] = (
-                        blocker_permanent.get("damage", 0) + assigned_damage
-                    )
                     remaining_damage -= assigned_damage
-                    damage_events.append({
-                        "source": attacker_id,
-                        "target": blocker_id,
-                        "amount": assigned_damage
-                    })
+                    if not self.is_protected_from(blocker_permanent, attacker_permanent):
+                        blocker_permanent["damage"] = (
+                            blocker_permanent.get("damage", 0) + assigned_damage
+                        )
+                        damage_events.append({
+                            "source": attacker_id,
+                            "target": blocker_id,
+                            "amount": assigned_damage
+                        })
 
             for blocker in assigned_blockers:
                 blocker_id = blocker["creature_id"]
@@ -1098,7 +1126,7 @@ class Game:
                         "first strike" not in blocker_keywords
                         or "double strike" in blocker_keywords
                     )
-                    if blocker_eligible:
+                    if blocker_eligible and not self.is_protected_from(attacker_permanent, blocker_permanent):
                         b_power, _ = self.get_effective_pt(blocker_permanent)
                         attacker_permanent["damage"] = (
                             attacker_permanent.get("damage", 0) + b_power
@@ -1155,6 +1183,7 @@ class Game:
     def finish_cleanup(self):
 
         self.cant_gain_life_this_turn = False
+        self.cant_prevent_damage_this_turn = False
         for client in self.clients:
             client.mana_pool = {}
             for permanent in client.battlefield:
@@ -1164,6 +1193,8 @@ class Game:
                     permanent["temp_toughness_buff"] = 0
                     permanent["cant_regenerate"] = False
                     permanent["regeneration_shield"] = False
+                    permanent.pop("opponent_targeting_blocked_until_eot", None)
+                    permanent.pop("temporary_haste", None)
 
         active_client = self.client_for_player(self.active_player)
         next_client = self.other_client(active_client)

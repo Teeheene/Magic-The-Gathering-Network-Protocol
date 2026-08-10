@@ -366,7 +366,15 @@ class PduDispatcher:
 
         expected_payment = self.server.card_mana_cost(card_id)
         declared_payment = self.server.normalize_mana_payment(mana_payment)
-        if expected_payment is None or declared_payment != expected_payment:
+        base_id = self.server.base_card_id(card_id)
+        kicker_payment = {
+            "goblin_bushwhacker": {"R": 2, "X": 1},
+            "vines_of_vastwood": {"G": 2},
+        }.get(base_id)
+        legal_payments = [expected_payment]
+        if kicker_payment is not None:
+            legal_payments.append(kicker_payment)
+        if expected_payment is None or declared_payment not in legal_payments:
             return self.send_error(
                 client,
                 "mana_payment must match the spell's mana cost.",
@@ -393,7 +401,8 @@ class PduDispatcher:
             "source": card_id,
             "controller": client.pid,
             "targets": list(targets),
-            "mana_payment": dict(mana_payment)
+            "mana_payment": dict(mana_payment),
+            "kicked": kicker_payment is not None and declared_payment == kicker_payment,
         }
         self.server.commit_mana_payment(client, mana_payment_plan)
         client.hand.remove(card_id)
@@ -691,10 +700,7 @@ class PduDispatcher:
         for creature_id in creature_ids:
             _, permanent = self.server.find_permanent(creature_id)
             if isinstance(permanent, dict):
-                keywords = {
-                    str(keyword).casefold().replace("_", " ")
-                    for keyword in permanent.get("keywords", [])
-                }
+                keywords = self.server.permanent_keywords(permanent)
                 if "defender" in keywords:
                     return self.send_error(client, "Creatures with Defender cannot attack.", ERR_ILLEGAL_ACTION, pdu)
                 if permanent.get("tapped") or (
@@ -790,6 +796,8 @@ class PduDispatcher:
             if "flying" in attacker_keywords:
                 if "flying" not in blocker_keywords and "reach" not in blocker_keywords:
                     return self.send_error(client, "Ground creatures without Flying or Reach cannot block flying creatures.", ERR_ILLEGAL_ACTION, pdu)
+            if self.server.is_protected_from(attacker_perm, blocker_perm):
+                return self.send_error(client, "A creature cannot block a creature protected from its color.", ERR_ILLEGAL_ACTION, pdu)
 
         if any(
             blocker["blocking_id"] not in attacking_ids
