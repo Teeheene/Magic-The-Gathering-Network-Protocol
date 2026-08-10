@@ -58,3 +58,16 @@ Execute the entire test suite across unit, domain engine, GUI, and real-socket i
 ```bash
 python -m pytest tests/ -v
 ```
+
+The Qt client is an off-screen-testable PySide6 desktop client. It provides connection and
+lobby/deck selection, London mulligan, battlefield/hand/stack/exile views, priority, casting,
+targets, mana and kicker prompts, activated abilities, combat assignment, trigger/card-choice
+dialogs, suspend, concede, game-over, and same-socket rematch. The server remains authoritative;
+the experimental `CARD_CHOICE_REQUEST`/`CARD_CHOICE_RESPONSE` and `SUSPEND_CARD` PDUs are
+documented in `CSNETWK_MP_MTGNP.md` and handled by both CLI and Qt clients.
+
+For headless CI use:
+
+```bash
+QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v --tb=short
+```

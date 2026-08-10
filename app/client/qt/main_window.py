@@ -41,7 +41,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(root)
         outer = QVBoxLayout(root)
         self.status_label = QLabel("Phase: LOBBY | Turn: 0")
-        self.life_label = QLabel("Life Totals â€” You: 20 | Opponent: 20")
+        self.life_label = QLabel("Life Totals — You: 20 | Opponent: 20")
         self.status_label.setObjectName("Status")
         self.life_label.setObjectName("Life")
         outer.addWidget(self.status_label)
@@ -110,6 +110,10 @@ class MainWindow(QMainWindow):
         right.addWidget(QLabel("The Stack (Top)")); right.addWidget(self.stack_list, 2)
         right.addWidget(QLabel("Your Exile / Suspended Cards")); right.addWidget(self.exile_list, 1)
         right.addWidget(QLabel("Status / Errors")); right.addWidget(self.log_text, 1)
+        self.game_over_label = QLabel(""); self.game_over_label.setObjectName("Status")
+        right.addWidget(self.game_over_label)
+        self.rematch_btn = QPushButton("REMATCH"); self.rematch_btn.setObjectName("Primary")
+        self.rematch_btn.clicked.connect(self.send_rematch); right.addWidget(self.rematch_btn)
         board.addLayout(left, 3); board.addLayout(right, 2); layout.addLayout(board, 1)
         actions = QHBoxLayout()
         self.pass_btn = QPushButton("PASS PRIORITY"); self.pass_btn.clicked.connect(self.on_pass_clicked)
@@ -142,6 +146,10 @@ class MainWindow(QMainWindow):
             self.state.deck_list = [card.card_id for card in deck]
         self.dispatcher.send_player_ready()
 
+    def send_rematch(self):
+        self.state.reset_for_lobby()
+        self.dispatcher.send_player_ready()
+
     def close_connection(self):
         self.dispatcher.connection.close()
         self.state.reset_for_lobby(); self.refresh_ui()
@@ -152,7 +160,7 @@ class MainWindow(QMainWindow):
         holder = self.state.priority_holder or "None"
         self.status_label.setText(f"Phase: {phase} | Turn: {turn} | Priority: {holder}")
         opponent = self.presenter.opponent_id() or "Opponent"
-        self.life_label.setText(f"Life Totals â€” You ({self.state.pid}): {self.state.life_totals.get(self.state.pid, 20)} | Opponent ({opponent}): {self.state.life_totals.get(opponent, 20)}")
+        self.life_label.setText(f"Life Totals — You ({self.state.pid}): {self.state.life_totals.get(self.state.pid, 20)} | Opponent ({opponent}): {self.state.life_totals.get(opponent, 20)}")
         if phase == "LOBBY": self.pages.setCurrentWidget(self.pages.widget(0))
         elif phase == "MULLIGAN": self.pages.setCurrentWidget(self.pages.widget(2))
         elif phase == "GAME_OVER": self.pages.setCurrentWidget(self.pages.widget(3))
@@ -162,6 +170,12 @@ class MainWindow(QMainWindow):
         self._refresh_actions(phase)
         self._refresh_choice()
         self._refresh_trigger_prompt()
+        info = self.state.game_over_info or {}
+        self.game_over_label.setText(
+            f"GAME OVER — Winner: {info.get('winner_id', '—')} | {info.get('reason', '')}"
+            if phase == "GAME_OVER" else ""
+        )
+        self.rematch_btn.setVisible(phase == "GAME_OVER")
         if getattr(self.state, "last_error", None):
             error = self.state.last_error
             self.log_text.setPlainText(f"{error.get('code', 'ERROR')}: {error.get('message', '')}")
