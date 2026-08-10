@@ -108,6 +108,26 @@ class CardEffects:
                 return "RESOLVED", changes
             return "FIZZLE", []
 
+        if base_id == "swords_to_plowshares":
+            owner, permanent = game.find_permanent(target_id)
+            if owner is None or not isinstance(permanent, dict):
+                return "FIZZLE", []
+            power, _ = game.get_effective_pt(permanent)
+            owner.battlefield.remove(permanent)
+            owner.exile = getattr(owner, "exile", [])
+            owner.exile.append(target_id)
+            gained = game.gain_life(owner, power)
+            return "RESOLVED", [
+                {"type": "EXILE", "target": target_id},
+                {"type": "LIFE_GAIN", "target": owner.pid, "amount": gained},
+            ]
+
+        if base_id == "pacifism":
+            owner, permanent = game.find_permanent(target_id)
+            if owner is None or permanent is None:
+                return "FIZZLE", []
+            return "RESOLVED", [{"type": "AURA_ATTACH", "target": target_id}]
+
         # Ponder
         if base_id == "ponder":
             if controller_client.library:

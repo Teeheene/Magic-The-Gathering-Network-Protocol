@@ -131,6 +131,10 @@ class StateBuilder:
                 client.pid: list(client.graveyard)
                 for client in clients
             },
+            "exile": {
+                client.pid: list(getattr(client, "exile", []))
+                for client in clients
+            },
             "stack": _clean_stack(self.server.stack),
         }
 
@@ -167,6 +171,10 @@ class StateBuilder:
             },
             "graveyard": {
                 client.pid: list(client.graveyard)
+                for client in clients
+            },
+            "exile": {
+                client.pid: list(getattr(client, "exile", []))
                 for client in clients
             },
             "stack": _clean_stack(self.server.stack),
@@ -207,6 +215,10 @@ class StateBuilder:
             },
             "graveyard": {
                 client.pid: list(client.graveyard)
+                for client in clients
+            },
+            "exile": {
+                client.pid: list(getattr(client, "exile", []))
                 for client in clients
             },
             "stack": _clean_stack(getattr(self.server, "stack", [])),

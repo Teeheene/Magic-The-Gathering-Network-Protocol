@@ -677,6 +677,8 @@ class PduDispatcher:
             card_data = self.server.card_data(creature_id) or {}
             if "creature" not in card_data.get("card_type", "").casefold():
                 return self.send_error(client, f"{creature_id} is not a Creature and cannot attack.", ERR_ILLEGAL_ACTION, pdu)
+            if self.server.is_pacified(creature_id):
+                return self.send_error(client, "A creature enchanted by Pacifism cannot attack.", ERR_ILLEGAL_ACTION, pdu)
 
         opponent = self.server.other_client(client)
         if opponent is None or any(
@@ -770,6 +772,8 @@ class PduDispatcher:
             card_data = self.server.card_data(blocker_id) or {}
             if "creature" not in card_data.get("card_type", "").casefold():
                 return self.send_error(client, f"{blocker_id} is not a Creature and cannot block.", ERR_ILLEGAL_ACTION, pdu)
+            if self.server.is_pacified(blocker_id):
+                return self.send_error(client, "A creature enchanted by Pacifism cannot block.", ERR_ILLEGAL_ACTION, pdu)
             _, permanent = self.server.find_permanent(blocker_id)
             if isinstance(permanent, dict) and permanent.get("tapped"):
                 return self.send_error(client, "Tapped creatures cannot block.", ERR_ILLEGAL_ACTION, pdu)

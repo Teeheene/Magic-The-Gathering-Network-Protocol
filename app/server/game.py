@@ -83,6 +83,7 @@ class Game:
             client.life_total = 20
             client.battlefield = []
             client.graveyard = []
+            client.exile = []
             client.mulligan_taken = 0
             client.mulligan_kept = False
 
@@ -139,19 +140,23 @@ class Game:
         card_type = card_data.get("card_type", "").casefold()
         text = card_data.get("text", "").casefold()
 
-        # Non-Aura permanents do not target on cast
-        if not is_ability and ("creature" in card_type or "artifact" in card_type or "enchantment" in card_type or "land" in card_type):
+        base_id = self.base_card_id(card_id)
+
+        # Non-Aura permanents do not target on cast.
+        if (
+            not is_ability
+            and base_id != "pacifism"
+            and ("creature" in card_type or "artifact" in card_type or "enchantment" in card_type or "land" in card_type)
+        ):
             return not targets
 
-        requires_target = "target" in text
+        requires_target = "target" in text or base_id == "pacifism"
         if not requires_target:
             return not targets
         if len(targets) != 1:
             return False
 
         target_id = targets[0]
-        base_id = self.base_card_id(card_id)
-
         if base_id == "raise_dead":
             controller = self.client_for_player(controller_id)
             if controller is None or target_id not in controller.graveyard:
@@ -745,6 +750,15 @@ class Game:
                     return client, permanent
         return None, None
 
+    def is_pacified(self, permanent_id):
+        return any(
+            isinstance(aura, dict)
+            and self.base_card_id(aura.get("id", "")) == "pacifism"
+            and aura.get("attached_to") == permanent_id
+            for client in self.clients
+            for aura in client.battlefield
+        )
+
     @staticmethod
     def permanent_keywords(permanent):
         if not isinstance(permanent, dict):
@@ -971,6 +985,8 @@ class Game:
                         "keywords": card_data.get("keywords", []),
                         "damage": 0
                     }
+                    if base_id == "pacifism" and targets:
+                        perm["attached_to"] = targets[0]
                     ctrl_client.battlefield.append(perm)
                     resolution_events = GameEvent(
                         "permanent_entered",

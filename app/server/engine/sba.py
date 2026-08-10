@@ -82,6 +82,18 @@ class StateBasedActions:
                             changes.append({"type": "CREATURE_DIED", "card_id": cid, "owner": client.pid})
                             pass_changes += 1
 
+            # 4. Auras whose attached permanent left the battlefield go to graveyard.
+            for client in clients:
+                for permanent in list(getattr(client, "battlefield", [])):
+                    if not isinstance(permanent, dict) or not permanent.get("attached_to"):
+                        continue
+                    if game_state.find_permanent(permanent["attached_to"])[1] is None:
+                        client.battlefield.remove(permanent)
+                        card_id = permanent.get("id", "")
+                        client.graveyard.append(card_id)
+                        changes.append({"type": "AURA_DIED", "card_id": card_id, "owner": client.pid})
+                        pass_changes += 1
+
             if pass_changes == 0:
                 break
 

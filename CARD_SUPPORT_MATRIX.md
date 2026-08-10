@@ -32,7 +32,7 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Air Elemental | air_elemental | Creature | Flying | MISSING | — | Flying block restriction absent |
 | Phantasmal Bear | phantasmal_bear | Creature | Sacrifice when targeted | COMPLETE | `test_real_trigger_orchestration_phantasmal_bear` | — |
 | Giant Growth | giant_growth | Instant | Temporary +3/+3 | COMPLETE | `test_giant_growth_cast_resolution_and_cleanup` | — |
-| Rampant Growth | rampant_growth | Sorcery | Basic-land search tapped/shuffle | MISSING | — | Search/selection and resolution absent |
+| Rampant Growth | rampant_growth | Sorcery | Basic-land search tapped/shuffle | MISSING | — | MTGNP CAST_SPELL has no library-card selection field |
 | Naturalize | naturalize | Instant | Destroy artifact/enchantment | COMPLETE | `test_naturalize_e2e` | — |
 | Vines of Vastwood | vines_of_vastwood | Instant | Target restriction; Kicker buff | MISSING | — | Kicker and temporary targeting restriction absent |
 | Llanowar Elves | llanowar_elves | Creature | Tap: add green | COMPLETE | `test_elves_are_implicit_green_sources_with_tap_and_sickness_rules` | Mana abilities are implicit under MTGNP |
@@ -41,10 +41,10 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Leatherback Baloth | leatherback_baloth | Creature | Vanilla creature | NO SPECIAL ENGINE WORK REQUIRED | — | Generic creature path; no card-specific test required |
 | Troll Ascetic | troll_ascetic | Creature | Hexproof; regenerate | COMPLETE | `test_troll_hexproof_rejects_opponent_target_but_allows_controller`, `test_troll_regeneration_shield_prevents_lethal_sba_once` | — |
 | Wall of Stone | wall_of_stone | Creature | Defender | COMPLETE | `test_defender_and_vigilance_combat` | — |
-| Swords to Plowshares | swords_to_plowshares | Instant | Exile creature; controller gains power | MISSING | — | Exile zone/effect and life gain absent |
-| Path to Exile | path_to_exile | Instant | Exile; optional basic-land search | MISSING | — | Exile and optional search decision absent |
+| Swords to Plowshares | swords_to_plowshares | Instant | Exile creature; controller gains power | COMPLETE | `test_swords_exiles_and_gains_effective_power` | — |
+| Path to Exile | path_to_exile | Instant | Exile; optional basic-land search | MISSING | — | MTGNP has no optional-search response or library-card selection field |
 | Healing Salve | healing_salve | Instant | Modal gain/prevent damage | MISSING | — | Mode selection and prevention absent |
-| Pacifism | pacifism | Enchantment | Aura; cannot attack/block | MISSING | — | Aura targeting/attachment and combat restriction absent |
+| Pacifism | pacifism | Enchantment | Aura; cannot attack/block | COMPLETE | `test_pacifism_attaches_and_prevents_attacking`, `test_pacifism_prevents_blocking` | Orphaned Aura cleanup is enforced by SBA |
 | White Knight | white_knight | Creature | First strike; protection black | PARTIAL | — | First-strike engine exists; protection absent and no card production proof |
 | Serra Angel | serra_angel | Creature | Flying; Vigilance | PARTIAL | `test_defender_and_vigilance_combat` | Vigilance proved; Flying restriction absent |
 | Savannah Lions | savannah_lions | Creature | Vanilla creature | NO SPECIAL ENGINE WORK REQUIRED | `test_combat_damage_result_precedes_state_and_priority` | Generic creature/combat path |
@@ -53,7 +53,7 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Terror | terror | Instant | Restricted destroy; no regeneration | COMPLETE | `test_terror_and_doom_blade_cast_restrictions_and_resolution`, `test_terror_and_incinerate_honor_no_regeneration` | — |
 | Doom Blade | doom_blade | Instant | Destroy nonblack creature | COMPLETE | `test_terror_and_doom_blade_cast_restrictions_and_resolution` | — |
 | Raise Dead | raise_dead | Sorcery | Creature graveyard to hand | COMPLETE | `test_raise_dead_cast_resolution` | — |
-| Mind Rot | mind_rot | Sorcery | Target player discards two | MISSING | — | Hidden-card player decision absent |
+| Mind Rot | mind_rot | Sorcery | Target player discards two | MISSING | — | MTGNP DISCARD is Cleanup-only; no in-game hidden-card choice request exists |
 | Gray Merchant of Asphodel | gray_merchant | Creature | Devotion drain ETB | COMPLETE | `test_real_trigger_orchestration_gray_merchant` | — |
 | Gravedigger | gravedigger | Creature | Target creature return ETB | COMPLETE | `test_gravedigger_trigger_choice_persistence` | — |
 | Royal Assassin | royal_assassin | Creature | Tap: destroy tapped creature | COMPLETE | `test_repeatable_artifact_and_assassin_abilities_use_full_activation_path` | — |
@@ -65,8 +65,8 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 
 ## Baseline totals
 
-- COMPLETE: 29
+- COMPLETE: 31
 - PARTIAL: 7
-- MISSING: 13
+- MISSING: 11
 - NO SPECIAL ENGINE WORK REQUIRED: 9
 - Total: 58
