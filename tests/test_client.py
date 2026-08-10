@@ -92,6 +92,30 @@ class TestClientStateAndRendering(unittest.TestCase):
         self.assertIsNotNone(self.client_state.last_error)
         self.assertEqual(self.client_state.last_error["code"], "STALE_ACTION")
 
+    def test_concede_uses_literal_last_received_error_sequence(self):
+        self.dispatcher.handle({
+            "type": "STACK_RESOLVE", "seq_num": 53,
+            "stack_item_id": "stk_01", "result": "RESOLVED",
+            "state_changes": [],
+        })
+        self.dispatcher.handle({
+            "type": "ERROR", "seq_num": 50, "code": "STALE_ACTION",
+            "message": "stale", "rejected_action": {},
+        })
+
+        self.dispatcher.send_concede()
+        self.mock_connection.send.assert_called_with({
+            "type": "CONCEDE", "seq_num": 50, "player_id": "player_1",
+        })
+
+    def test_concede_uses_literal_last_received_pong_sequence(self):
+        self.dispatcher.handle({"type": "PONG", "seq_num": 7, "timestamp": 123})
+
+        self.dispatcher.send_concede()
+        self.mock_connection.send.assert_called_with({
+            "type": "CONCEDE", "seq_num": 7, "player_id": "player_1",
+        })
+
     def test_gameplay_action_builders_echo_seq_num(self):
         self.client_state.priority_seq_num = 42
 

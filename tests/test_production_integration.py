@@ -408,10 +408,7 @@ class TestProductionIntegration(unittest.TestCase):
         self.game.advance_phase()  # DECLARE_ATTACKERS -> DECLARE_BLOCKERS
         self.assertEqual(self.game.phase, "DECLARE_BLOCKERS")
 
-        self.game.advance_phase()  # DECLARE_BLOCKERS -> COMBAT_DAMAGE
-        self.assertEqual(self.game.phase, "COMBAT_DAMAGE")
-
-        self.game.advance_phase()  # COMBAT_DAMAGE -> END_OF_COMBAT
+        self.game.advance_phase()  # DECLARE_BLOCKERS -> COMBAT_DAMAGE -> END_OF_COMBAT
         self.assertEqual(self.game.phase, "END_OF_COMBAT")
 
         self.game.advance_phase()  # END_OF_COMBAT -> POSTCOMBAT_MAIN

@@ -601,7 +601,6 @@ class Game:
             "DECLARE_BLOCKERS": self.advance_after_blockers,
             "ASSIGN_DAMAGE_ORDER": self.start_combat_damage,
             "FIRST_STRIKE_DAMAGE": lambda: self.resolve_combat_damage(False),
-            "COMBAT_DAMAGE": lambda: self.enter_priority_phase("END_OF_COMBAT"),
             "END_OF_COMBAT": lambda: self.enter_priority_phase("POSTCOMBAT_MAIN"),
             "POSTCOMBAT_MAIN": lambda: self.enter_priority_phase("END_STEP"),
             "END_STEP": self.cleanup
@@ -908,6 +907,13 @@ class Game:
         t = permanent.get("toughness", 0) + permanent.get("temp_toughness_buff", 0)
         return max(0, p), max(0, t)
 
+    def enter_end_of_combat_after_damage(self):
+        self.priority_holder = self.active_player
+        self.consecutive_priority_passes = 0
+        if not self.transition_phase("END_OF_COMBAT"):
+            return False
+        return self.grant_priority(self.active_player)
+
     def resolve_combat_damage(self, first_strike):
         phase = "FIRST_STRIKE_DAMAGE" if first_strike else "COMBAT_DAMAGE"
         self.priority_holder = None
@@ -1022,7 +1028,11 @@ class Game:
             game_over_info,
         )
 
-        self.priority_holder = self.active_player
+        if first_strike:
+            self.priority_holder = self.active_player
+        else:
+            self.priority_holder = None
+            self.pending_event_continuation = self.enter_end_of_combat_after_damage
         return self.post_event(
             GameEvent("combat_damage_dealt", {"damage_events": damage_events}),
             sba_result=sba_result,

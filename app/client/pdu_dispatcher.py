@@ -25,6 +25,9 @@ class PduDispatcher:
         pdu_type = pdu.get("type")
         seq_num = pdu.get("seq_num")
 
+        if isinstance(seq_num, int) and not isinstance(seq_num, bool):
+            self.state.last_received_pdu_seq_num = seq_num
+
         if seq_num is not None and pdu_type != "ERROR":
             self.state.latest_seq_num = seq_num
 
@@ -278,7 +281,7 @@ class PduDispatcher:
     def send_concede(self):
         self.connection.send({
             "type": "CONCEDE",
-            "seq_num": self.state.latest_seq_num,
+            "seq_num": self.state.last_received_pdu_seq_num,
             "player_id": self.state.pid
         })
 

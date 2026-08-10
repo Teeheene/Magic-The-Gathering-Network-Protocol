@@ -33,6 +33,7 @@ class ClientState:
 
         #seq_num
         self.latest_seq_num = 0
+        self.last_received_pdu_seq_num = None
         self.player_ready_seq_num = 1
         self.priority_seq_num = None
         self.phase_seq_num = None

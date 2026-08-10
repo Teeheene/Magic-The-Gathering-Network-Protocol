@@ -431,7 +431,7 @@ class TestRuntimeCorrections(unittest.TestCase):
         self.assertTrue(self.game.game_over)
 
     def test_combat_damage_priority_window(self):
-        """Item 11: Normal combat damage -> priority granted in COMBAT_DAMAGE -> 2 passes advance to END_OF_COMBAT."""
+        """Normal combat damage transitions directly to the End-of-Combat priority window."""
         c1 = self.create_mock_client("alice", 1001)
         c2 = self.create_mock_client("bob", 1002)
         self.mock_connection.clients = [c1, c2]
@@ -439,13 +439,13 @@ class TestRuntimeCorrections(unittest.TestCase):
         self.game.active_player = "alice"
 
         self.game.resolve_combat_damage(False)
-        self.assertEqual(self.game.phase, "COMBAT_DAMAGE")
+        self.assertEqual(self.game.phase, "END_OF_COMBAT")
         self.assertEqual(self.game.priority_holder, "alice")
 
-        # Two passes advance phase to END_OF_COMBAT
+        # Two passes from End of Combat advance to Postcombat Main.
         self.game.pdu_dispatcher.handle_priority_pass(c1, {"type": "PRIORITY_PASS", "seq_num": c1.active_priority_seq_num})
         self.game.pdu_dispatcher.handle_priority_pass(c2, {"type": "PRIORITY_PASS", "seq_num": c2.active_priority_seq_num})
-        self.assertEqual(self.game.phase, "END_OF_COMBAT")
+        self.assertEqual(self.game.phase, "POSTCOMBAT_MAIN")
 
     def test_combat_damage_result_precedes_state_and_priority(self):
         c1 = self.create_mock_client("alice", 1001)
@@ -473,8 +473,18 @@ class TestRuntimeCorrections(unittest.TestCase):
         self.assertTrue(self.game.resolve_combat_damage(False))
         types = [pdu_type for pdu_type, _ in sent]
         result_index = types.index("COMBAT_DAMAGE_RESULT")
-        self.assertLess(result_index, types.index("GAME_STATE_UPDATE"))
-        self.assertLess(types.index("GAME_STATE_UPDATE"), types.index("PRIORITY_GRANT"))
+        state_index = types.index("GAME_STATE_UPDATE")
+        end_of_combat_index = next(
+            index for index, (pdu_type, payload) in enumerate(sent)
+            if pdu_type == "PHASE_TRANSITION"
+            and payload.get("to_phase") == "END_OF_COMBAT"
+        )
+        priority_index = types.index("PRIORITY_GRANT")
+        self.assertLess(result_index, state_index)
+        self.assertLess(state_index, end_of_combat_index)
+        self.assertLess(end_of_combat_index, priority_index)
+        self.assertEqual(types.count("PRIORITY_GRANT"), 1)
+        self.assertEqual(self.game.phase, "END_OF_COMBAT")
         result = next(payload for pdu_type, payload in sent if pdu_type == "COMBAT_DAMAGE_RESULT")
         self.assertCountEqual(
             result["creatures_died"],
