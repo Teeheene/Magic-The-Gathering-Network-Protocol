@@ -1,5 +1,5 @@
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout, QDialog
 from PySide6.QtGui import QPixmap
 from app.shared.card_catalog import CardCatalog
 
@@ -46,6 +46,27 @@ class CardWidget(QFrame):
     def mousePressEvent(self, event):
         self.clicked.emit(self.card.card_id)
         super().mousePressEvent(event)
+
+
+class CardInspector(QDialog):
+    """Large preview that never reveals identities absent from the supplied card."""
+    def __init__(self, card, asset_manager=None, parent=None):
+        super().__init__(parent)
+        self.card = card; self.asset_manager = asset_manager
+        self.setWindowTitle(card.name); self.resize(420, 600)
+        layout = QVBoxLayout(self)
+        self.image = QLabel("No artwork cached"); self.image.setAlignment(Qt.AlignCenter)
+        self.image.setMinimumSize(300, 400); layout.addWidget(self.image)
+        layout.addWidget(QLabel(f"{card.name}\n{card.mana_cost}\n{card.card_type}\n{card.text}"))
+        if asset_manager:
+            asset_manager.image_ready.connect(self._on_image)
+            asset_manager.request(card.card_id, "full")
+            asset_manager.request(card.card_id, "art")
+
+    def _on_image(self, base_id, variant, pixmap):
+        if base_id != CardCatalog.base_card_id(self.card.card_id): return
+        self.image.setPixmap(pixmap.scaled(self.image.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
+        self.image.setText("")
 
 
 class ZoneWidget(QFrame):
