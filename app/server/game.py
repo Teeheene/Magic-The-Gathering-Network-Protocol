@@ -87,6 +87,8 @@ class Game:
             client.exile = []
             client.mulligan_taken = 0
             client.mulligan_kept = False
+            client.pending_card_choice = None
+            client.active_card_choice_seq_num = None
 
         if not self.transition_phase("GAME_SETUP"):
             return False
@@ -941,11 +943,19 @@ class Game:
         if bool(getattr(self, "pending_damage_orders", None)):
             return True
         for client in getattr(self, "clients", []):
+            if getattr(client, "pending_card_choice", None) is not None:
+                return True
             if getattr(client, "pending_trigger_choice", None) is not None:
                 return True
             if getattr(client, "pending_trigger_ids", None) is not None:
                 return True
         return False
+
+    def has_pending_card_choice(self) -> bool:
+        return any(
+            getattr(client, "pending_card_choice", None) is not None
+            for client in getattr(self, "clients", [])
+        )
 
     def other_player(self, player_id: str) -> Optional[str]:
         for c in self.clients:

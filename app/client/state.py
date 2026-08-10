@@ -38,11 +38,13 @@ class ClientState:
         self.priority_seq_num = None
         self.phase_seq_num = None
         self.trigger_seq_num = None
+        self.card_choice_seq_num = None
         self.heartbeat_seq_num = 1
 
 
         #server prompts and results
         self.pending_request = None
+        self.pending_card_choice = None
         self.last_stack_resolution = None
         self.last_combat_damage_result = None
         self.last_pong_timestamp = None
@@ -92,8 +94,10 @@ class ClientState:
         self.priority_seq_num = None
         self.phase_seq_num = None
         self.trigger_seq_num = None
+        self.card_choice_seq_num = None
 
         self.pending_request = None
+        self.pending_card_choice = None
         self.last_stack_resolution = None
         self.last_combat_damage_result = None
         self.is_game_over = False

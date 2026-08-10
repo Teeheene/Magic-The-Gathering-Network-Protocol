@@ -19,6 +19,11 @@ ERR_INSUFFICIENT_MANA = "INSUFFICIENT_MANA"
 ERR_ILLEGAL_TARGET = "ILLEGAL_TARGET"
 ERR_TRIGGER_ORDER_INVALID = "TRIGGER_ORDER_INVALID"
 ERR_TRIGGER_CHOICE_INVALID = "TRIGGER_CHOICE_INVALID"
+ERR_CARD_CHOICE_INVALID = "CARD_CHOICE_INVALID"
+
+CARD_CHOICE_TYPES = {
+    "SELECT_CARDS", "ORDER_CARDS", "YES_NO", "COLOR", "PAY_MANA", "MADNESS_CAST",
+}
 
 MSG_DECK_TOO_LARGE = "Deck contains {count} cards; maximum is 50."
 MSG_EMPTY_PLAYER_ID = "player_id must be a non-empty string."
@@ -41,6 +46,7 @@ class PduDispatcher:
             "ACTIVATE_ABILITY": self.handle_activate_ability,
             "TRIGGER_ORDER_RESPONSE": self.handle_trigger_order_response,
             "TRIGGER_CHOICE_RESPONSE": self.handle_trigger_choice_response,
+            "CARD_CHOICE_RESPONSE": self.handle_card_choice_response,
             "DECLARE_ATTACKERS": self.handle_declare_attackers,
             "DECLARE_BLOCKERS": self.handle_declare_blockers,
             "ASSIGN_DAMAGE_ORDER": self.handle_assign_damage_order,
@@ -53,6 +59,13 @@ class PduDispatcher:
     def handle(self, client, pdu):
         pdu_type = pdu.get("type")
 
+        if self.server.has_pending_card_choice() and pdu_type not in {
+            "CARD_CHOICE_RESPONSE", "PING", "CONCEDE",
+        }:
+            return self.send_error(
+                client, "A mandatory card choice is pending.", ERR_ILLEGAL_ACTION, pdu
+            )
+
         handler = self.handlers.get(pdu_type)
         if handler is None:
             return self.send_error(
@@ -63,6 +76,26 @@ class PduDispatcher:
             )
 
         return handler(client, pdu)
+
+    def handle_card_choice_response(self, client, pdu):
+        pending = getattr(client, "pending_card_choice", None)
+        expected = getattr(client, "active_card_choice_seq_num", None)
+        if pending is None:
+            return self.send_error(client, "No card choice is pending for this player.", ERR_CARD_CHOICE_INVALID, pdu)
+        if pdu.get("player_id") != client.pid:
+            return self.send_error(client, "player_id does not match the deciding player.", ERR_CARD_CHOICE_INVALID, pdu)
+        if pdu.get("seq_num") != expected:
+            return self.send_error(client, "seq_num does not match the active card-choice token.", ERR_STALE_ACTION, pdu)
+        validator = pending.get("validator")
+        normalized = validator(pdu) if callable(validator) else None
+        if normalized is None:
+            return self.send_error(client, "Invalid card choice response.", ERR_CARD_CHOICE_INVALID, pdu)
+        continuation = pending.get("continuation")
+        client.pending_card_choice = None
+        client.active_card_choice_seq_num = None
+        if callable(continuation):
+            return continuation(normalized)
+        return True
 
     def build_error(self, message: str, code: str, pdu):
         seq_num = pdu.get("seq_num") if isinstance(pdu, dict) and isinstance(pdu.get("seq_num"), int) else getattr(self.server, "seq_num", 0)
@@ -1122,6 +1155,38 @@ class PduDispatcher:
             requires_target=getattr(trg, "requires_target", False),
             legal_targets=getattr(trg, "legal_targets", [])
         )
+
+    def send_card_choice_request(
+        self, client, source_card_id, choice_type, prompt,
+        min_choices=0, max_choices=0, options=None,
+        validator=None, continuation=None, **details
+    ):
+        if choice_type not in CARD_CHOICE_TYPES:
+            raise ValueError(f"Unsupported card choice type: {choice_type}")
+        safe_options = list(options or [])
+        client.pending_card_choice = {
+            "source_card_id": source_card_id,
+            "choice_type": choice_type,
+            "min_choices": min_choices,
+            "max_choices": max_choices,
+            "options": safe_options,
+            "validator": validator,
+            "continuation": continuation,
+        }
+        pdu = self._send(
+            client, "CARD_CHOICE_REQUEST",
+            player_id=client.pid,
+            source_card_id=source_card_id,
+            choice_type=choice_type,
+            prompt=prompt,
+            min_choices=min_choices,
+            max_choices=max_choices,
+            options=safe_options,
+            **details,
+        )
+        client.active_card_choice_seq_num = pdu["seq_num"]
+        self.server.priority_holder = None
+        return pdu
 
     def send_stack_resolve(
         self,
