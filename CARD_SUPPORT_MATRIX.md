@@ -24,9 +24,9 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Counterspell | counterspell | Instant | Counter spell | COMPLETE | `test_counterspell_zone_movement_e2e` | — |
 | Cancel | cancel | Instant | Counter spell | COMPLETE | `test_cancel_and_negate_counter_through_cast_stack_path` | — |
 | Unsummon | unsummon | Instant | Bounce creature | COMPLETE | `test_unsummon_e2e` | — |
-| Ponder | ponder | Sorcery | Top-three reorder/shuffle/draw | PARTIAL | — | Currently only draws one card |
+| Ponder | ponder | Sorcery | Top-three reorder/shuffle/draw | PARTIAL | — | Draw exists; MTGNP has no private reorder/optional-shuffle request or response |
 | Negate | negate | Instant | Counter noncreature spell | COMPLETE | `test_cancel_and_negate_counter_through_cast_stack_path` | Resolution restriction uses the same authoritative validator |
-| Mana Leak | mana_leak | Instant | Counter unless controller pays 3 | PARTIAL | — | Server auto-decides payment; no player decision mechanism |
+| Mana Leak | mana_leak | Instant | Counter unless controller pays 3 | PARTIAL | — | Existing server auto-decision is insufficient; MTGNP has no affected-player payment response |
 | Merfolk Looter | merfolk_looter | Creature | Tap: draw then discard | MISSING | — | Ability resolution and mandatory discard decision absent |
 | Prodigal Sorcerer | prodigal_sorcerer | Creature | Tap: 1 damage | COMPLETE | `test_prodigal_sorcerer_activated_ability_resolution` | — |
 | Air Elemental | air_elemental | Creature | Flying | MISSING | — | Flying block restriction absent |
@@ -43,7 +43,7 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 | Wall of Stone | wall_of_stone | Creature | Defender | COMPLETE | `test_defender_and_vigilance_combat` | — |
 | Swords to Plowshares | swords_to_plowshares | Instant | Exile creature; controller gains power | COMPLETE | `test_swords_exiles_and_gains_effective_power` | — |
 | Path to Exile | path_to_exile | Instant | Exile; optional basic-land search | MISSING | — | MTGNP has no optional-search response or library-card selection field |
-| Healing Salve | healing_salve | Instant | Modal gain/prevent damage | MISSING | — | Mode selection and prevention absent |
+| Healing Salve | healing_salve | Instant | Modal gain/prevent damage | MISSING | — | MTGNP CAST_SPELL has no mode/prevention-target field and no modal-choice response |
 | Pacifism | pacifism | Enchantment | Aura; cannot attack/block | COMPLETE | `test_pacifism_attaches_and_prevents_attacking`, `test_pacifism_prevents_blocking` | Orphaned Aura cleanup is enforced by SBA |
 | White Knight | white_knight | Creature | First strike; protection black | PARTIAL | — | First-strike engine exists; protection absent and no card production proof |
 | Serra Angel | serra_angel | Creature | Flying; Vigilance | PARTIAL | `test_defender_and_vigilance_combat` | Vigilance proved; Flying restriction absent |
@@ -70,3 +70,18 @@ Baseline audited at `c2151ca`. “COMPLETE” requires a production-path regress
 - MISSING: 11
 - NO SPECIAL ENGINE WORK REQUIRED: 9
 - Total: 58
+
+## Protocol decision gaps
+
+The fixed 25-PDU MTGNP protocol has no compatible wire representation for these required player choices:
+
+- Merfolk Looter: which card to discard after drawing outside Cleanup.
+- Mother of Runes: which color to choose.
+- Rampant Growth: which basic land to select from the controller's library.
+- Path to Exile: whether to search and which basic land to select.
+- Mind Rot: which two hidden cards the targeted player discards outside Cleanup.
+- Ponder: private top-three ordering and optional shuffle.
+- Mana Leak: whether the targeted spell's controller pays three mana.
+- Healing Salve: mode selection and the prevention target.
+
+Per the completion plan, no new PDU or overloaded incompatible field was invented. Passes D–F and the final keyword audit are paused at this protocol boundary.
