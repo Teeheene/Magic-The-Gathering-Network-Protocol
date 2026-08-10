@@ -67,6 +67,11 @@ class CardEffects:
 
             # Remove from stack
             game.stack.remove(target_item)
+            if target_item.get("item_type") == "SPELL":
+                target_source = target_item.get("source")
+                target_ctrl = game.client_for_player(target_item.get("controller"))
+                if target_ctrl and target_source:
+                    target_ctrl.graveyard.append(target_source)
             changes.append({"type": "COUNTER_SPELL", "stack_item_id": target_id})
             return "RESOLVED", changes
 
@@ -113,3 +118,51 @@ class CardEffects:
                 return "RESOLVED", changes
 
         return "RESOLVED", changes
+
+    @classmethod
+    def resolve_ability_effect(
+        cls, base_id: str, source_id: str, targets: List[str], controller_client: Any, opponent_client: Any, game: Any
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        changes: List[Dict[str, Any]] = []
+        target_id = targets[0] if targets else None
+
+        if base_id in {"prodigal_sorcerer", "rod_of_ruin"}:
+            if target_id == opponent_client.pid or target_id == controller_client.pid:
+                target_c = opponent_client if target_id == opponent_client.pid else controller_client
+                target_c.life_total -= 1
+                changes.append({"type": "DAMAGE_PLAYER", "target": target_id, "amount": 1})
+            else:
+                owner, perm = game.find_permanent(target_id) if hasattr(game, "find_permanent") else (None, None)
+                if perm and isinstance(perm, dict):
+                    perm["damage"] = perm.get("damage", 0) + 1
+                    changes.append({"type": "DAMAGE_CREATURE", "target": target_id, "amount": 1})
+            return "RESOLVED", changes
+
+        if base_id == "royal_assassin":
+            owner, perm = game.find_permanent(target_id) if hasattr(game, "find_permanent") else (None, None)
+            if owner and perm and isinstance(perm, dict) and perm.get("tapped"):
+                owner.battlefield.remove(perm)
+                owner.graveyard.append(target_id)
+                changes.append({"type": "DESTROY", "target": target_id})
+                return "RESOLVED", changes
+            return "FIZZLE", []
+
+        if base_id == "millstone":
+            target_c = game.client_for_player(target_id) if (target_id and hasattr(game, "client_for_player")) else None
+            if not target_c and opponent_client and target_id == opponent_client.pid:
+                target_c = opponent_client
+            if not target_c and controller_client and target_id == controller_client.pid:
+                target_c = controller_client
+            if target_c:
+                milled = []
+                for _ in range(2):
+                    if target_c.library:
+                        card = target_c.library.pop(0)
+                        target_c.graveyard.append(card)
+                        milled.append(card)
+                changes.append({"type": "MILL", "target": target_c.pid, "cards": milled})
+                return "RESOLVED", changes
+            return "FIZZLE", []
+
+        return "RESOLVED", changes
+

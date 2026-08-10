@@ -145,9 +145,13 @@ class PduDispatcher:
 
     def handle_pong(self, pdu):
         seq = pdu.get("seq_num")
-        if seq == getattr(self.state, "pending_ping_seq", None) or getattr(self.state, "pending_ping_seq", None) is None:
+        pending = getattr(self.state, "pending_ping_seq", None)
+        if pending is not None:
+            if seq == pending:
+                self.state.last_pong_timestamp = time.time()
+                self.state.pending_ping_seq = None
+        else:
             self.state.last_pong_timestamp = time.time()
-            self.state.pending_ping_seq = None
 
     def send_ping(self, timestamp=None):
         if timestamp is None:

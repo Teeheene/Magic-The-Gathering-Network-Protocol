@@ -55,43 +55,41 @@ class PduDispatcher:
 
         handler = self.handlers.get(pdu_type)
         if handler is None:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 MSG_UNKNOWN_TYPE,
                 ERR_UNKNOWN_TYPE,
                 pdu
             )
-            client.send(error)
-            return False
 
         return handler(client, pdu)
 
-    #errors
     def build_error(self, message: str, code: str, pdu):
+        seq_num = pdu.get("seq_num") if isinstance(pdu, dict) and isinstance(pdu.get("seq_num"), int) else getattr(self.server, "seq_num", 0)
         return {
             "type": "ERROR",
-            "seq_num": self.server.seq_num,
+            "seq_num": seq_num,
             "code": code,
             "message": message,
-            "rejected_action": pdu 
+            "rejected_action": pdu if isinstance(pdu, dict) else {}
         }
 
     def _validate_seq_num(self, client, pdu, source):
         if pdu.get("seq_num") == client.seq_num:
             return True
-        error = self.build_error(
+        return self.send_error(
+            client,
             f"seq_num does not match the latest {source}.",
             ERR_STALE_ACTION,
             pdu
         )
-        client.send(error)
-        return False
 
     def _validate_priority_action(self, client, pdu):
         if getattr(self.server, "priority_holder", None) != client.pid:
             return self.send_error(
                 client,
                 "Only the current priority holder may perform this action.",
-                "NOT_YOUR_PRIORITY",
+                ERR_NOT_YOUR_PRIORITY,
                 pdu
             )
         expected_seq = getattr(client, "active_priority_seq_num", None)
@@ -99,7 +97,7 @@ class PduDispatcher:
             self.send_error(
                 client,
                 "seq_num does not match the active PRIORITY_GRANT token.",
-                "STALE_ACTION",
+                ERR_STALE_ACTION,
                 pdu
             )
             if self.server.priority_holder == client.pid:
@@ -108,26 +106,24 @@ class PduDispatcher:
         return True
 
     def _validate_land_action(self, client, pdu):
-        expected_seq = getattr(client, "active_priority_seq_num", getattr(client, "seq_num", None))
+        expected_seq = getattr(client, "active_priority_seq_num", None)
         if expected_seq is not None and pdu.get("seq_num") != expected_seq:
             return self.send_error(
                 client,
                 "seq_num does not match the active PRIORITY_GRANT token.",
-                "STALE_ACTION",
+                ERR_STALE_ACTION,
                 pdu
             )
         return True
 
-
     def reissue_priority_grant(self, client):
         pdu = {
             "type": "PRIORITY_GRANT",
-            "seq_num": getattr(client, "active_priority_seq_num", self.server.seq_num),
+            "seq_num": getattr(client, "active_priority_seq_num", getattr(self.server, "seq_num", 0)),
             "player_id": client.pid,
             "time_limit_ms": 30000
         }
         client.send(pdu)
-
 
     def _validate_phase_seq_num(self, client, pdu):
         expected_seq = getattr(client, "active_phase_seq_num", None)
@@ -136,10 +132,9 @@ class PduDispatcher:
         return self.send_error(
             client,
             "seq_num does not match the active PHASE_TRANSITION token.",
-            "STALE_ACTION",
+            ERR_STALE_ACTION,
             pdu
         )
-
 
     @staticmethod
     def _zone_card_ids(zone):
@@ -198,10 +193,8 @@ class PduDispatcher:
             )
 
         if isinstance(player_id, str) and any(
-            existing_client is not client
-            and isinstance(existing_client.pid, str)
-            and existing_client.pid.casefold() == player_id.casefold()
-            for existing_client in self.server.clients
+            other.pid == player_id and other is not client
+            for other in self.server.clients
         ):
             return self.send_error(
                 client,
@@ -212,6 +205,7 @@ class PduDispatcher:
 
         client.pid = player_id 
         client.deck_list = list(deck_list)
+        client.deck = list(deck_list)
         client.ready_in_lobby = True
         client.seq_num = self.server.seq_num + 1 
         if client not in self.server.clients:
@@ -226,11 +220,7 @@ class PduDispatcher:
 
 
     def handle_mulligan_choice(self, client, pdu):
-        required_state = (
-            "hand",
-            "library"
-        )
-        if any(not hasattr(client, field) for field in required_state):
+        if self.server.phase != "MULLIGAN":
             return self.send_error(
                 client,
                 "The mulligan phase has not been initialized.",
@@ -259,32 +249,29 @@ class PduDispatcher:
         keep = pdu.get("keep")
         cards_to_bottom = pdu.get("cards_to_bottom")
         if not isinstance(keep, bool) or not isinstance(cards_to_bottom, list):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "MULLIGAN_CHOICE requires a boolean keep and a cards_to_bottom list.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
 
         if not all(isinstance(card_id, str) for card_id in cards_to_bottom):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "cards_to_bottom must contain card IDs.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
 
         if not keep:
             if cards_to_bottom:
-                error = self.build_error(
+                return self.send_error(
+                    client,
                     "Only bottom cards when keeping a hand.",
                     ERR_ILLEGAL_ACTION,
                     pdu
                 )
-                client.send(error)
-                return False
 
             deck = list(client.library) + list(client.hand)
             random.shuffle(deck)
@@ -298,24 +285,22 @@ class PduDispatcher:
             return True
 
         if len(cards_to_bottom) != client.mulligan_taken:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 MSG_MULLIGAN_WRONG_BOTTOM_COUNT.format(
                     count=client.mulligan_taken
                 ),
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
 
         if Counter(cards_to_bottom) - Counter(client.hand):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 MSG_MULLIGAN_CARD_NOT_IN_HAND,
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
 
         for card_id in cards_to_bottom:
             client.hand.remove(card_id)
@@ -332,32 +317,7 @@ class PduDispatcher:
         if not self._validate_priority_action(client, pdu):
             return False
 
-        next_client = self.server.other_client(client)
-        if next_client is None:
-            return self.send_error(
-                client,
-                "Cannot pass priority without another connected player.",
-                ERR_ILLEGAL_ACTION,
-                pdu
-            )
-
-        self.server.consecutive_priority_passes = (
-            getattr(self.server, "consecutive_priority_passes", 0) + 1
-        )
-        if self.server.consecutive_priority_passes >= 2:
-            self.server.consecutive_priority_passes = 0
-            self.server.priority_holder = None
-            if self.server.stack:
-                return self.server.resolve_top_stack_item()
-            return self.server.advance_phase()
-
-        self.server.priority_holder = next_client.pid
-        self._broadcast_game_state()
-        self.send_priority_grant(
-            next_client,
-            self.server.priority_holder
-        )
-        return True
+        return self.server.register_priority_pass(client)
 
 
     def handle_cast_spell(self, client, pdu):
@@ -370,17 +330,20 @@ class PduDispatcher:
             or not isinstance(targets, list)
             or not isinstance(mana_payment, dict)
         ):
-            return self.send_error(client, "CAST_SPELL requires card_id, targets, and mana_payment.", "ILLEGAL_ACTION", pdu)
+            return self.send_error(client, "CAST_SPELL requires card_id, targets, and mana_payment.", ERR_ILLEGAL_ACTION, pdu)
 
         if card_id not in client.hand:
-            return self.send_error(client, "The spell is not in your hand.", "ILLEGAL_ACTION", pdu)
+            return self.send_error(client, "The spell is not in your hand.", ERR_ILLEGAL_ACTION, pdu)
 
-        card_data = self.server.card_data(card_id) or {}
+        card_data = self.server.card_data(card_id)
+        if card_data is None:
+            return self.send_error(client, f"Unknown card_id: {card_id}", ERR_ILLEGAL_ACTION, pdu)
+
         card_type = card_data.get("card_type", "").casefold()
 
         # Reject Land via CAST_SPELL
         if "land" in card_type:
-            return self.send_error(client, "Lands cannot be cast as spells. Use PLAY_LAND.", "ILLEGAL_ACTION", pdu)
+            return self.send_error(client, "Lands cannot be cast as spells. Use PLAY_LAND.", ERR_ILLEGAL_ACTION, pdu)
 
         # Sorcery-speed timing check for Creature, Sorcery, Artifact, Enchantment
         keywords = [k.casefold() for k in card_data.get("keywords", [])]
@@ -388,17 +351,17 @@ class PduDispatcher:
 
         if not is_instant_or_flash:
             if client.pid != self.server.active_player:
-                return self.send_error(client, "Sorcery-speed spells may only be cast on your turn.", "WRONG_PHASE", pdu)
+                return self.send_error(client, "Sorcery-speed spells may only be cast on your turn.", ERR_WRONG_PHASE, pdu)
             if self.server.phase not in {"PRECOMBAT_MAIN", "POSTCOMBAT_MAIN"}:
-                return self.send_error(client, "Sorcery-speed spells may only be cast in a main phase.", "WRONG_PHASE", pdu)
+                return self.send_error(client, "Sorcery-speed spells may only be cast in a main phase.", ERR_WRONG_PHASE, pdu)
             if getattr(self.server, "stack", []):
-                return self.send_error(client, "Sorcery-speed spells may only be cast when the stack is empty.", "ILLEGAL_ACTION", pdu)
+                return self.send_error(client, "Sorcery-speed spells may only be cast when the stack is empty.", ERR_ILLEGAL_ACTION, pdu)
 
         if not self._validate_priority_action(client, pdu):
             return False
 
         if not self.server.targets_are_legal(card_id, targets):
-            return self.send_error(client, "The spell's targets are missing or illegal.", "ILLEGAL_TARGET", pdu)
+            return self.send_error(client, "The spell's targets are missing or illegal.", ERR_ILLEGAL_TARGET, pdu)
 
 
         expected_payment = self.server.card_mana_cost(card_id)
@@ -437,11 +400,7 @@ class PduDispatcher:
         self.server.stack.append(stack_item)
         self.server.consecutive_priority_passes = 0
 
-        from app.server.engine.triggers import GameEvent
-        self.server.post_event(GameEvent("spell_cast", {"card_id": card_id, "controller": client.pid, "targets": targets}))
-        for target in targets:
-            self.server.post_event(GameEvent("became_target", {"target": target, "target_id": target, "source": card_id, "controller": client.pid}))
-
+        # Broadcast spell STACK_PUSH FIRST
         for viewing_client in self.server.clients:
             self.send_stack_push(
                 viewing_client,
@@ -451,8 +410,14 @@ class PduDispatcher:
                 client.pid,
                 targets
             )
-        self._broadcast_game_state()
-        self.send_priority_grant(client, client.pid)
+
+        # Publish events and run trigger / SBA / priority pipeline
+        from app.server.engine.triggers import GameEvent
+        events = [GameEvent("spell_cast", {"card_id": card_id, "controller": client.pid, "targets": targets})]
+        for target in targets:
+            events.append(GameEvent("became_target", {"target": target, "target_id": target, "source": card_id, "controller": client.pid}))
+
+        self.server.post_event(events)
         return True
 
 
@@ -472,29 +437,26 @@ class PduDispatcher:
             or not isinstance(targets, list)
             or not isinstance(cost_payment, dict)
         ):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "ACTIVATE_ABILITY contains invalid ability fields.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
         if source_id not in self._zone_card_ids(client.battlefield):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "The ability source is not on your battlefield.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
-        if not self.server.targets_are_legal(source_id, targets):
-            error = self.build_error(
+        if not self.server.targets_are_legal(source_id, targets, is_ability=True):
+            return self.send_error(
+                client,
                 "The ability's targets are missing or illegal.",
                 ERR_ILLEGAL_TARGET,
                 pdu
             )
-            client.send(error)
-            return False
 
 
         source_permanent = next(
@@ -513,35 +475,32 @@ class PduDispatcher:
             or declared_tap != expected_cost["tap"]
             or declared_mana != expected_cost["mana"]
         ):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "cost_payment must match the ability's activation cost.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
 
         if declared_tap and isinstance(source_permanent, dict):
             if source_permanent.get("tapped"):
-                error = self.build_error(
+                return self.send_error(
+                    client,
                     "The ability source is already tapped.",
                     ERR_ILLEGAL_ACTION,
                     pdu
                 )
-                client.send(error)
-                return False
             card_data = self.server.card_data(source_id) or {}
             if (
                 "creature" in card_data.get("card_type", "").casefold()
                 and source_permanent.get("summoning_sick")
             ):
-                error = self.build_error(
+                return self.send_error(
+                    client,
                     "A summoning-sick creature cannot pay a tap cost.",
                     ERR_ILLEGAL_ACTION,
                     pdu
                 )
-                client.send(error)
-                return False
 
         mana_sources = self.server.select_mana_sources(
             client,
@@ -549,13 +508,12 @@ class PduDispatcher:
             source_permanent if declared_tap else None,
         )
         if mana_sources is None:
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "You do not control enough untapped mana sources.",
                 ERR_INSUFFICIENT_MANA,
                 pdu
             )
-            client.send(error)
-            return False
 
         self.server.tap_permanents(mana_sources)
         if declared_tap and isinstance(source_permanent, dict):
@@ -574,6 +532,7 @@ class PduDispatcher:
         self.server.stack.append(stack_item)
         self.server.consecutive_priority_passes = 0
 
+        # Broadcast ability STACK_PUSH FIRST
         for viewing_client in self.server.clients:
             self.send_stack_push(
                 viewing_client,
@@ -583,8 +542,14 @@ class PduDispatcher:
                 client.pid,
                 targets
             )
-        self._broadcast_game_state()
-        self.send_priority_grant(client, client.pid)
+
+        # Publish became_target events and run trigger / SBA / priority pipeline
+        from app.server.engine.triggers import GameEvent
+        events = []
+        for target in targets:
+            events.append(GameEvent("became_target", {"target": target, "target_id": target, "source": source_id, "controller": client.pid}))
+
+        self.server.post_event(events if events else None)
         return True
 
     def handle_trigger_order_response(self, client, pdu):
@@ -613,9 +578,10 @@ class PduDispatcher:
             )
 
         client.pending_trigger_ids = None
-        trg_map = {trg.trigger_id: trg for trg in self.server.trigger_manager.pending_triggers}
+        trg_map = {trg.trigger_id: trg for trg in self.server.trigger_manager.pending_triggers if trg.controller == client.pid}
         reordered = [trg_map[tid] for tid in ordered_trigger_ids if tid in trg_map]
-        self.server.trigger_manager.pending_triggers = reordered
+        other_trgs = [trg for trg in self.server.trigger_manager.pending_triggers if trg.controller != client.pid]
+        self.server.trigger_manager.pending_triggers = reordered + other_trgs
         return self.server.post_event()
 
     def handle_trigger_choice_response(self, client, pdu):
@@ -753,6 +719,9 @@ class PduDispatcher:
         return self.server.after_attackers_declared()
 
 
+
+    def handle_concede(self, client, pdu):
+        return self.server.end_game(client, "CONCEDE")
 
     def handle_declare_blockers(self, client, pdu):
         if getattr(self.server, "phase", None) != "DECLARE_BLOCKERS":
@@ -1058,27 +1027,25 @@ class PduDispatcher:
         return True
 
     def handle_concede(self, client, pdu):
-        if pdu.get("player_id") != client.pid:
-            error = self.build_error(
+        player_id = pdu.get("player_id")
+        if player_id is not None and player_id != client.pid:
+            return self.send_error(
+                client,
                 "A player may only concede for themselves.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
-
         return self.server.end_game(client, "CONCEDE")
 
     def handle_ping(self, client, pdu):
         timestamp = pdu.get("timestamp")
         if timestamp is not None and not isinstance(timestamp, (int, float)):
-            error = self.build_error(
+            return self.send_error(
+                client,
                 "PING timestamp must be numeric.",
                 ERR_ILLEGAL_ACTION,
                 pdu
             )
-            client.send(error)
-            return False
         self.send_pong(client, pdu)
         return True
 
@@ -1120,7 +1087,7 @@ class PduDispatcher:
         )
         client.active_priority_seq_num = pdu["seq_num"]
         import time
-        client.priority_deadline = time.time() + (time_limit_ms / 1000.0)
+        client.priority_deadline = time.monotonic() + (time_limit_ms / 1000.0)
         return pdu
 
     def send_stack_push(
