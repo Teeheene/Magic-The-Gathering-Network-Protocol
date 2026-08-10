@@ -108,7 +108,7 @@ class CardChoiceDialog(QDialog):
         options = request.get("options", [])
         if choice_type in {"SELECT_CARDS", "SELECT_TARGETS", "ORDER_CARDS"}:
             self.list_widget.setSelectionMode(
-                QListWidget.MultiSelection if choice_type != "ORDER_CARDS" else QListWidget.SingleSelection
+                QListWidget.MultiSelection
             )
             for option in options:
                 self.list_widget.addItem(str(option))
@@ -130,14 +130,18 @@ class CardChoiceDialog(QDialog):
             values = [item.text() for item in self.list_widget.selectedItems()]
             self.result = {"selected_cards" if kind == "SELECT_CARDS" else "selected_targets": values}
         elif kind == "ORDER_CARDS":
-            self.result = {"ordered_cards": [self.list_widget.currentItem().text()] if self.list_widget.currentItem() else []}
+            self.result = {"ordered_cards": [item.text() for item in self.list_widget.selectedItems()]}
         elif kind == "COLOR":
             item = self.list_widget.currentItem()
             self.result = {"color": item.text() if item else ""}
         elif kind == "MADNESS_CAST":
             self.result = {"cast": affirmative}
+            if affirmative:
+                self.result["mana_payment"] = dict(self.request.get("required_mana", {}))
         elif kind == "PAY_MANA":
             self.result = {"pay": affirmative}
+            if affirmative:
+                self.result["mana_payment"] = dict(self.request.get("required_mana", {}))
         else:
             self.result = {"answer": affirmative}
         self.accept()

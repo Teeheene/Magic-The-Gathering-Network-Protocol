@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from app.client.qt.dialogs import CardChoiceDialog, MulliganDialog, TriggerChoiceDialog
 from app.client.qt.presenter import GamePresenter
 from app.client.pdu_dispatcher import PduDispatcher
+from app.client.deck_builder import DEFAULT_DECKS
 from app.shared.card_catalog import CardCatalog
 
 CATALOG_PATH = Path(__file__).resolve().parents[2] / "shared" / "card_catalog.json"
@@ -69,7 +70,7 @@ class MainWindow(QMainWindow):
         self.host_edit = QLineEdit("127.0.0.1"); self.port_edit = QLineEdit("5000")
         self.name_edit = QLineEdit(self.state.pid)
         self.deck_combo = QComboBox()
-        self.deck_combo.addItem("Forest's Might (Green)")
+        self.deck_combo.addItems([f"{name} Deck" for name in DEFAULT_DECKS])
         form.addRow("Server host", self.host_edit); form.addRow("Port", self.port_edit)
         form.addRow("Player name", self.name_edit); form.addRow("Deck", self.deck_combo)
         layout.addWidget(box)
@@ -131,6 +132,11 @@ class MainWindow(QMainWindow):
             self.connection_error.setText(f"Connection failed: {error}")
 
     def send_ready(self):
+        if not self.state.deck_list:
+            deck_name = self.deck_combo.currentText().split()[0]
+            counts = DEFAULT_DECKS.get(deck_name, {})
+            deck = self.catalog.create_deck(counts)
+            self.state.deck_list = [card.card_id for card in deck]
         self.dispatcher.send_player_ready()
 
     def close_connection(self):
@@ -209,10 +215,15 @@ class MainWindow(QMainWindow):
         card_id = item.text(); data = self.catalog.get_card_data(card_id) or {}; base = CardCatalog.base_card_id(card_id)
         targets = self._select_target(card_id) if "target" in data.get("text", "").casefold() else []
         mode = None
+        payment = {"X" if key == "Generic" else key: value for key, value in data.get("mana_cost", {}).items() if value}
+        if base in {"goblin_bushwhacker", "vines_of_vastwood"}:
+            kicked = QMessageBox.question(self, "Kicker", "Cast this spell kicked?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes
+            if kicked:
+                payment = {"R": 2, "X": 1} if base == "goblin_bushwhacker" else {"G": 2}
         if base == "healing_salve":
             mode, ok = QInputDialog.getItem(self, "Healing Salve", "Mode:", ["GAIN_LIFE", "PREVENT_DAMAGE"], 0, False)
             if not ok: return
-        self.dispatcher.send_cast_spell(card_id, targets=targets, mana_payment={"X" if key == "Generic" else key: value for key, value in data.get("mana_cost", {}).items() if value}, mode=mode)
+        self.dispatcher.send_cast_spell(card_id, targets=targets, mana_payment=payment, mode=mode)
 
     def on_activate_clicked(self):
         item = self.your_battlefield_list.currentItem()
