@@ -53,6 +53,7 @@ class CardInspector(QDialog):
     def __init__(self, card, asset_manager=None, parent=None):
         super().__init__(parent)
         self.card = card; self.asset_manager = asset_manager
+        self._full_failed = False; self._full_ready = False
         self.setWindowTitle(card.name); self.resize(420, 600)
         layout = QVBoxLayout(self)
         self.image = QLabel("No artwork cached"); self.image.setAlignment(Qt.AlignCenter)
@@ -60,13 +61,20 @@ class CardInspector(QDialog):
         layout.addWidget(QLabel(f"{card.name}\n{card.mana_cost}\n{card.card_type}\n{getattr(card, 'rules_text', getattr(card, 'text', ''))}"))
         if asset_manager:
             asset_manager.image_ready.connect(self._on_image)
+            asset_manager.image_failed.connect(self._on_failed)
             asset_manager.request(card.card_id, "full")
-            asset_manager.request(card.card_id, "art")
 
     def _on_image(self, base_id, variant, pixmap):
         if base_id != CardCatalog.base_card_id(self.card.card_id): return
+        if variant == "full": self._full_ready = True
+        if variant == "art" and not self._full_failed: return
         self.image.setPixmap(pixmap.scaled(self.image.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
         self.image.setText("")
+
+    def _on_failed(self, base_id, variant):
+        if base_id == CardCatalog.base_card_id(self.card.card_id) and variant == "full" and not self._full_ready:
+            self._full_failed = True
+            self.asset_manager.request(self.card.card_id, "art")
 
 
 class ZoneWidget(QFrame):
