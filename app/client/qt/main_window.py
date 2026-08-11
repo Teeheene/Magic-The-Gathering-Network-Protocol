@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
         self._choice_dialog_open = False
         self._trigger_dialog_open = False
         self._selected_attackers = []
+        self._mulligan_count = 0
         self.setWindowTitle(f"MTGNP 1.0 Client — Player: {state.pid}")
         self.resize(1366, 820)
         self._build_ui()
@@ -97,7 +98,7 @@ class MainWindow(QMainWindow):
         page = QWidget(); layout = QVBoxLayout(page)
         layout.addWidget(QLabel("3. MULLIGAN DECISION"))
         self.mulligan_hand = QListWidget(); self.mulligan_hand.setSelectionMode(QListWidget.MultiSelection); layout.addWidget(self.mulligan_hand)
-        row = QHBoxLayout(); self.keep_btn = QPushButton("KEEP"); self.keep_btn.setObjectName("Primary"); self.keep_btn.clicked.connect(lambda: self.dispatcher.send_mulligan_choice(True))
+        row = QHBoxLayout(); self.keep_btn = QPushButton("KEEP"); self.keep_btn.setObjectName("Primary"); self.keep_btn.clicked.connect(self.on_keep)
         self.mull_btn = QPushButton("MULLIGAN"); self.mull_btn.setObjectName("Danger"); self.mull_btn.clicked.connect(self.on_mulligan)
         row.addWidget(self.keep_btn); row.addWidget(self.mull_btn); layout.addLayout(row)
         self.pages.addWidget(page)
@@ -249,11 +250,17 @@ class MainWindow(QMainWindow):
 
     def on_mulligan(self):
         cards = [item.text() for item in self.mulligan_hand.selectedItems()]
-        self.dispatcher.send_mulligan_choice(False, cards_to_bottom=cards)
+        self._mulligan_count += 1
+        self.dispatcher.send_mulligan_choice(False, cards_to_bottom=[])
+
+    def on_keep(self):
+        cards = [item.text() for item in self.mulligan_hand.selectedItems()]
+        if len(cards) == self._mulligan_count:
+            self.dispatcher.send_mulligan_choice(True, cards_to_bottom=cards)
 
     def on_play_land_clicked(self):
-        item = self.hand_list.currentItem()
-        if item: self.dispatcher.send_play_land(item.text())
+        ids = self.hand_list.selected_ids()
+        if ids: self.dispatcher.send_play_land(ids[0])
 
     def _select_target(self, card_id):
         data = self.catalog.get_card_data(card_id) or {}; base = CardCatalog.base_card_id(card_id)
@@ -269,9 +276,9 @@ class MainWindow(QMainWindow):
         return [choice] if ok and choice else []
 
     def on_cast_spell_clicked(self):
-        item = self.hand_list.currentItem()
-        if not item: return
-        card_id = item.text(); data = self.catalog.get_card_data(card_id) or {}; base = CardCatalog.base_card_id(card_id)
+        ids = self.hand_list.selected_ids()
+        if not ids: return
+        card_id = ids[0]; data = self.catalog.get_card_data(card_id) or {}; base = CardCatalog.base_card_id(card_id)
         targets = self._select_target(card_id) if "target" in data.get("text", "").casefold() else []
         mode = None
         payment = {"X" if key == "Generic" else key: value for key, value in data.get("mana_cost", {}).items() if value}
@@ -285,9 +292,9 @@ class MainWindow(QMainWindow):
         self.dispatcher.send_cast_spell(card_id, targets=targets, mana_payment=payment, mode=mode)
 
     def on_activate_clicked(self):
-        item = self.your_battlefield_list.currentItem()
-        if item:
-            source_id = item.text().split(" ")[0]
+        ids = self.your_battlefield_list.selected_ids()
+        if ids:
+            source_id = ids[0]
             data = self.catalog.get_card_data(source_id) or {}
             targets = self._select_target(source_id) if "target" in data.get("text", "").casefold() else []
             self.dispatcher.send_activate_ability(source_id, targets=targets, cost_payment={"tap": True, "mana": {}})
@@ -305,10 +312,10 @@ class MainWindow(QMainWindow):
             self.dispatcher.send_declare_blockers([])
             return
         blockers = []
-        for item in self.your_battlefield_list.selectedItems():
+        for card_id in self.your_battlefield_list.selected_ids():
             attacker, ok = QInputDialog.getItem(self, "Block attacker", "Attacker:", options, 0, False)
             if ok and attacker:
-                blockers.append({"creature_id": item.text().split(" ")[0], "blocking_id": attacker})
+                blockers.append({"creature_id": card_id, "blocking_id": attacker})
         self.dispatcher.send_declare_blockers(blockers)
 
     def on_damage_order_clicked(self):
@@ -319,8 +326,8 @@ class MainWindow(QMainWindow):
                 )
 
     def on_suspend_clicked(self):
-        item = self.hand_list.currentItem()
-        if item and CardCatalog.base_card_id(item.text()) == "rift_bolt": self.dispatcher.send_suspend_card(item.text(), {"R": 1})
+        ids = self.hand_list.selected_ids()
+        if ids and CardCatalog.base_card_id(ids[0]) == "rift_bolt": self.dispatcher.send_suspend_card(ids[0], {"R": 1})
 
     def closeEvent(self, event):
         self.dispatcher.connection.close()
