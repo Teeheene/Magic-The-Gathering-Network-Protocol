@@ -685,10 +685,12 @@ class Game:
         while not all(client.mulligan_kept for client in self.clients):
             if getattr(self, "game_over", False):
                 return False
+            # Keep every connected socket serviced while decisions are pending.  A player
+            # who already kept cannot mulligan again (dispatcher validation enforces that),
+            # but must still receive PONGs and remain able to concede or disconnect.
             waiting_clients = {
                 client.sock: client
                 for client in self.clients
-                if not client.mulligan_kept
             }
             readable, _, _ = select.select(waiting_clients, [], [])
 

@@ -113,9 +113,12 @@ class TestRealSocketIntegration(unittest.TestCase):
         gsu_c1 = read_until(c1, "GAME_STATE_UPDATE")
         gsu_c2 = read_until(c2, "GAME_STATE_UPDATE")
 
-        # Both keep hand in Mulligan
-        c1.sendall(encode_pdu({"type": "MULLIGAN_CHOICE", "seq_num": gsu_c1["seq_num"], "keep": True, "cards_to_bottom": []}))
+        # Bob keeps first; while Alice remains undecided, Bob's heartbeat must still be serviced.
         c2.sendall(encode_pdu({"type": "MULLIGAN_CHOICE", "seq_num": gsu_c2["seq_num"], "keep": True, "cards_to_bottom": []}))
+        c2.sendall(encode_pdu({"type": "PING", "seq_num": 77, "timestamp": 123}))
+        pong = read_until(c2, "PONG")
+        self.assertEqual(pong["seq_num"], 77)
+        c1.sendall(encode_pdu({"type": "MULLIGAN_CHOICE", "seq_num": gsu_c1["seq_num"], "keep": True, "cards_to_bottom": []}))
 
         # Both reach UPKEEP
         upk_c1 = read_until_phase(c1, "UPKEEP")
