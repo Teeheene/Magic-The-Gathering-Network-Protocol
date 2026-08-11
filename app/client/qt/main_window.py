@@ -12,6 +12,8 @@ from app.client.qt.presenter import GamePresenter
 from app.client.pdu_dispatcher import PduDispatcher
 from app.client.deck_builder import DEFAULT_DECKS
 from app.shared.card_catalog import CardCatalog
+from app.client.qt.assets import AssetManager
+from app.client.qt.widgets import ZoneWidget, CardInspector
 
 CATALOG_PATH = Path(__file__).resolve().parents[2] / "shared" / "card_catalog.json"
 
@@ -26,6 +28,7 @@ class MainWindow(QMainWindow):
         self.state = state
         self.dispatcher = dispatcher
         self.catalog = CardCatalog(CATALOG_PATH)
+        self.asset_manager = AssetManager(self.catalog, parent=self)
         self.presenter = GamePresenter(state, self.catalog)
         self._choice_dialog_open = False
         self._trigger_dialog_open = False
@@ -68,7 +71,7 @@ class MainWindow(QMainWindow):
     def _build_connection_page(self):
         page = QWidget(); layout = QVBoxLayout(page)
         box = QGroupBox("1. LAUNCH / CONNECT"); form = QFormLayout(box)
-        self.host_edit = QLineEdit("127.0.0.1"); self.port_edit = QLineEdit("5000")
+        self.host_edit = QLineEdit("127.0.0.1"); self.port_edit = QLineEdit("4444")
         self.name_edit = QLineEdit(self.state.pid)
         self.deck_combo = QComboBox()
         self.deck_combo.addItems([f"{name} Deck" for name in DEFAULT_DECKS])
@@ -103,18 +106,24 @@ class MainWindow(QMainWindow):
         page = QWidget(); layout = QVBoxLayout(page)
         board = QHBoxLayout(); left = QVBoxLayout(); right = QVBoxLayout()
         self.opponent_info = QLabel("Opponent")
-        self.opp_battlefield_list = QListWidget(); self.your_battlefield_list = QListWidget(); self.hand_list = QListWidget()
-        self.stack_list = QListWidget(); self.exile_list = QListWidget(); self.log_text = QTextEdit(); self.log_text.setReadOnly(True)
+        self.opp_battlefield_list = ZoneWidget("Opponent Battlefield", asset_manager=self.asset_manager)
+        self.your_battlefield_list = ZoneWidget("Your Battlefield", asset_manager=self.asset_manager)
+        self.hand_list = ZoneWidget("Your Hand", asset_manager=self.asset_manager)
+        self.stack_list = ZoneWidget("The Stack", asset_manager=self.asset_manager)
+        self.exile_list = ZoneWidget("Your Exile / Suspended Cards", asset_manager=self.asset_manager)
+        self.log_text = QTextEdit(); self.log_text.setReadOnly(True)
         for title, widget in (("Opponent Battlefield", self.opp_battlefield_list), ("Your Battlefield", self.your_battlefield_list), ("Your Hand", self.hand_list)):
             left.addWidget(QLabel(title)); left.addWidget(widget, 1)
-        right.addWidget(QLabel("The Stack (Top)")); right.addWidget(self.stack_list, 2)
-        right.addWidget(QLabel("Your Exile / Suspended Cards")); right.addWidget(self.exile_list, 1)
+        right.addWidget(self.stack_list, 2)
+        right.addWidget(self.exile_list, 1)
         right.addWidget(QLabel("Status / Errors")); right.addWidget(self.log_text, 1)
         self.game_over_label = QLabel(""); self.game_over_label.setObjectName("Status")
         right.addWidget(self.game_over_label)
         self.rematch_btn = QPushButton("REMATCH"); self.rematch_btn.setObjectName("Primary")
         self.rematch_btn.clicked.connect(self.send_rematch); right.addWidget(self.rematch_btn)
         board.addLayout(left, 3); board.addLayout(right, 2); layout.addLayout(board, 1)
+        for zone in (self.opp_battlefield_list, self.your_battlefield_list, self.hand_list, self.stack_list, self.exile_list):
+            zone.card_clicked.connect(self.inspect_card)
         actions = QHBoxLayout()
         self.pass_btn = QPushButton("PASS PRIORITY"); self.pass_btn.clicked.connect(self.on_pass_clicked)
         self.play_land_btn = QPushButton("PLAY LAND"); self.play_land_btn.clicked.connect(self.on_play_land_clicked)
@@ -134,7 +143,6 @@ class MainWindow(QMainWindow):
             connection = self.dispatcher.connection
             connection.host = self.host_edit.text().strip(); connection.port = int(self.port_edit.text())
             connection.connect(); connection.start_heartbeat(self.dispatcher)
-            self.send_ready()
         except (OSError, ValueError) as error:
             self.connection_error.setText(f"Connection failed: {error}")
 
@@ -161,7 +169,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"Phase: {phase} | Turn: {turn} | Priority: {holder}")
         opponent = self.presenter.opponent_id() or "Opponent"
         self.life_label.setText(f"Life Totals — You ({self.state.pid}): {self.state.life_totals.get(self.state.pid, 20)} | Opponent ({opponent}): {self.state.life_totals.get(opponent, 20)}")
-        if phase == "LOBBY": self.pages.setCurrentWidget(self.pages.widget(0))
+        if phase == "LOBBY": self.pages.setCurrentWidget(self.pages.widget(1 if self.state.connected else 0))
         elif phase == "MULLIGAN": self.pages.setCurrentWidget(self.pages.widget(2))
         elif phase == "GAME_OVER": self.pages.setCurrentWidget(self.pages.widget(3))
         elif phase in {"GAME_SETUP", "LOBBY"}: self.pages.setCurrentWidget(self.pages.widget(1))
@@ -181,16 +189,22 @@ class MainWindow(QMainWindow):
             self.log_text.setPlainText(f"{error.get('code', 'ERROR')}: {error.get('message', '')}")
 
     def _refresh_lists(self, opponent):
-        self.hand_list.clear(); self.mulligan_hand.clear()
+        self.mulligan_hand.clear()
         for card_id in self.state.local_hand:
-            self.hand_list.addItem(card_id); self.mulligan_hand.addItem(card_id)
-        self.your_battlefield_list.clear(); self.opp_battlefield_list.clear()
-        for card in self.state.battlefield.get(self.state.pid, []): self.your_battlefield_list.addItem(card.get("id", str(card)))
-        for card in self.state.battlefield.get(opponent, []): self.opp_battlefield_list.addItem(card.get("id", str(card)))
-        self.stack_list.clear()
+            self.mulligan_hand.addItem(card_id)
+        self.hand_list.set_cards([self.presenter.card(card_id) for card_id in self.state.local_hand])
+        self.your_battlefield_list.set_cards([self.presenter.card(card.get("id", str(card)), tapped=bool(card.get("tapped"))) for card in self.state.battlefield.get(self.state.pid, [])])
+        self.opp_battlefield_list.set_cards([self.presenter.card(card.get("id", str(card)), selectable=False) for card in self.state.battlefield.get(opponent, [])])
+        pass
+        pass
+        self.stack_list.set_cards([self.presenter.card(item.get("source", "Ability")) for item in self.state.stack])
         for item in self.state.stack: self.stack_list.addItem(f"{item.get('source', 'Ability')} — {item.get('controller', '')}")
-        self.exile_list.clear()
+        self.exile_list.set_cards([self.presenter.card(card_id) for card_id in self.state.exile.get(self.state.pid, [])])
         for card_id in self.state.exile.get(self.state.pid, []): self.exile_list.addItem(card_id)
+
+    def inspect_card(self, card_id):
+        self._inspector = CardInspector(self.presenter.card(card_id), self.asset_manager, self)
+        self._inspector.show()
 
     def _refresh_actions(self, phase):
         usable = self.state.priority_holder == self.state.pid and self.state.priority_seq_num is not None

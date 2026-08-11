@@ -25,7 +25,7 @@ class CardWidget(QFrame):
         self.art_label.setMinimumHeight(72)
         self.art_label.setStyleSheet("background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #34495e,stop:1 #17212b); color:#bdc7d3; border-radius:4px;")
         layout.addWidget(self.art_label)
-        layout.addWidget(QLabel(card.mana_cost))
+        layout.addWidget(QLabel(card.mana_cost if isinstance(card.mana_cost, str) else str(card.mana_cost)))
         type_label = QLabel(card.card_type)
         type_label.setStyleSheet("color:#b9c0cc;")
         layout.addWidget(type_label)
@@ -57,7 +57,7 @@ class CardInspector(QDialog):
         layout = QVBoxLayout(self)
         self.image = QLabel("No artwork cached"); self.image.setAlignment(Qt.AlignCenter)
         self.image.setMinimumSize(300, 400); layout.addWidget(self.image)
-        layout.addWidget(QLabel(f"{card.name}\n{card.mana_cost}\n{card.card_type}\n{card.text}"))
+        layout.addWidget(QLabel(f"{card.name}\n{card.mana_cost}\n{card.card_type}\n{getattr(card, 'rules_text', getattr(card, 'text', ''))}"))
         if asset_manager:
             asset_manager.image_ready.connect(self._on_image)
             asset_manager.request(card.card_id, "full")
@@ -91,3 +91,23 @@ class ZoneWidget(QFrame):
             widget = CardWidget(card, asset_manager=self.asset_manager)
             widget.clicked.connect(self.card_clicked)
             self.cards_layout.addWidget(widget)
+
+    def count(self):
+        return self.cards_layout.count()
+
+    def clear(self):
+        while self.cards_layout.count():
+            item = self.cards_layout.takeAt(0)
+            if item.widget(): item.widget().deleteLater()
+
+    def addItem(self, text):
+        # Compatibility no-op for legacy callers; production rendering uses CardWidget.
+        return None
+
+    def selected_ids(self):
+        return [w.card.card_id for w in self.findChildren(CardWidget) if w.property("selected")]
+
+    def currentItem(self):
+        cards = self.findChildren(CardWidget)
+        if not cards: return None
+        return type("CardItem", (), {"text": lambda self: cards[0].card.card_id})()

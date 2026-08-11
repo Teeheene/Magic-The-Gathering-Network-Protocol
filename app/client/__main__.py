@@ -55,6 +55,7 @@ def launch_qt_client(args):
     app = QApplication.instance() or QApplication(sys.argv)
     pid = args.player_id or "alice"
     state = ClientState(pid)
+    state.connected = False
 
     conn = ClientConnection(args.host, args.port, args.verbose)
     dispatcher = PduDispatcher(state, conn)
@@ -62,13 +63,6 @@ def launch_qt_client(args):
 
     window = MainWindow(state, dispatcher)
     state.on_state_change = lambda: window.state_updated_signal.emit()
-
-    try:
-        conn.connect()
-        conn.start_heartbeat(dispatcher)
-    except OSError as err:
-        print(f"Connection failed: {err}")
-        return
 
     window.show()
     sys.exit(app.exec())
