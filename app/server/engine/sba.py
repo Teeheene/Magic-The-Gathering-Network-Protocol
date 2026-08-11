@@ -59,6 +59,8 @@ class StateBasedActions:
                 for perm in list(getattr(client, "battlefield", [])):
                     if isinstance(perm, dict):
                         toughness = perm.get("toughness")
+                        if toughness is not None:
+                            toughness += perm.get("temp_toughness_buff", 0)
                         damage = perm.get("damage", 0)
                         if toughness is not None and (toughness <= 0 or damage >= toughness):
                             if (

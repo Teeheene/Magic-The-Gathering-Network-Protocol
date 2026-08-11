@@ -1716,7 +1716,7 @@ class Game:
                 except (ConnectionError, OSError):
                     self.end_game(client, "DISCONNECT")
                     return
-                except (json.JSONDecodeError, UnicodeDecodeError):
+                except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
                     from app.server.pdu_dispatcher import MSG_INVALID_JSON, ERR_INVALID_JSON
                     self.pdu_dispatcher.send_error(client, MSG_INVALID_JSON, ERR_INVALID_JSON)
 

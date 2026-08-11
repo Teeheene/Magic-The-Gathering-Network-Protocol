@@ -60,8 +60,12 @@ class PduDispatcher:
     def handle(self, client, pdu):
         pdu_type = pdu.get("type")
 
-        if self.server.has_pending_card_choice() and pdu_type not in {
-            "CARD_CHOICE_RESPONSE", "PING", "CONCEDE",
+        trigger_pending = (
+            getattr(client, "pending_trigger_ids", None) is not None
+            or getattr(client, "pending_trigger_choice", None) is not None
+        )
+        if (self.server.has_pending_card_choice() or trigger_pending) and pdu_type not in {
+            "CARD_CHOICE_RESPONSE", "TRIGGER_ORDER_RESPONSE", "TRIGGER_CHOICE_RESPONSE", "PING", "CONCEDE",
         }:
             return self.send_error(
                 client, "A mandatory card choice is pending.", ERR_ILLEGAL_ACTION, pdu

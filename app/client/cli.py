@@ -482,7 +482,7 @@ def has_usable_priority(state):
     return (
         state.priority_holder == state.pid
         and state.priority_seq_num is not None
-        and state.priority_seq_num == state.latest_seq_num
+        and state.priority_seq_num is not None
     )
 
 

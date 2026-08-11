@@ -38,6 +38,8 @@ class ClientState:
         self.last_received_pdu_seq_num = None
         self.player_ready_seq_num = 1
         self.priority_seq_num = None
+        self.mulligan_seq_num = None
+        self.cleanup_seq_num = None
         self.phase_seq_num = None
         self.trigger_seq_num = None
         self.card_choice_seq_num = None
@@ -100,6 +102,8 @@ class ClientState:
         self.pending_damage_orders = []
 
         self.priority_seq_num = None
+        self.mulligan_seq_num = None
+        self.cleanup_seq_num = None
         self.phase_seq_num = None
         self.trigger_seq_num = None
         self.card_choice_seq_num = None

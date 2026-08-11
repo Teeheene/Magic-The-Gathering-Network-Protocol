@@ -81,6 +81,10 @@ class PduDispatcher:
         for field in remembered_fields:
             if field in server_state:
                 setattr(self.state, field, deepcopy(server_state[field]))
+        if server_state.get("phase") == "MULLIGAN":
+            self.state.mulligan_seq_num = pdu.get("seq_num")
+        elif server_state.get("phase") == "CLEANUP":
+            self.state.cleanup_seq_num = pdu.get("seq_num")
 
         if isinstance(self.state.hand, dict):
             self.state.local_hand = list(self.state.hand.get(self.state.pid, []))
@@ -194,7 +198,7 @@ class PduDispatcher:
     def send_mulligan_choice(self, keep, cards_to_bottom=None):
         self.connection.send({
             "type": "MULLIGAN_CHOICE",
-            "seq_num": self.state.latest_seq_num,
+            "seq_num": self.state.mulligan_seq_num,
             "keep": keep,
             "cards_to_bottom": list(cards_to_bottom or [])
         })
@@ -290,7 +294,7 @@ class PduDispatcher:
     def send_discard(self, card_ids):
         self.connection.send({
             "type": "DISCARD",
-            "seq_num": self.state.latest_seq_num,
+            "seq_num": self.state.cleanup_seq_num,
             "card_ids": list(card_ids)
         })
 
