@@ -50,6 +50,7 @@ class ClientState:
         self.last_stack_resolution = None
         self.last_combat_damage_result = None
         self.last_pong_timestamp = None
+        self.last_error = None
         self.is_game_over = False
         self.game_over_info = None
         self.on_state_change = None
@@ -107,6 +108,7 @@ class ClientState:
         self.pending_card_choice = None
         self.last_stack_resolution = None
         self.last_combat_damage_result = None
+        self.last_error = None
         self.is_game_over = False
         self.game_over_info = None
 
